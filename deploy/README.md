@@ -6,10 +6,10 @@
 
 ## Create the VM
 ```
-IP_CIDR=10.0.20.50/24 GATEWAY=10.0.20.1 ADMIN_CIDR=10.0.10.0/24 VLAN=20 \
+IP_CIDR=10.10.0.239/24 GATEWAY=10.10.0.254 ADMIN_CIDR=10.10.0.0/24 VLAN=1010 BRIDGE=vmbr1 \
   ./deploy/proxmox-create-vm.sh
 ```
-Defaults: VMID 9100, 2 vCPU, 2 GB RAM, 20 GB disk, auto-start on boot, UEFI. Override with env vars (see script header).
+Defaults: bridge vmbr1, VMID 9100, 2 vCPU, 2 GB RAM, 20 GB disk, auto-start on boot, UEFI. Override with env vars (see script header).
 The VM boots, installs Docker/ufw/etc., reboots once, then is ready. Login: `ssh ops@<ip>` (key only).
 
 Installed by hand from the ISO instead? Run `deploy/bootstrap.sh` as root in the VM.

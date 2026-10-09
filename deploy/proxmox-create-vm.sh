@@ -7,7 +7,7 @@ VMID=${VMID:-9100}
 NAME=${NAME:-nz-dashboard}
 STORAGE=${STORAGE:-local-lvm}          # where the VM disk lives
 SNIPPETS=${SNIPPETS:-local}            # storage with 'Snippets' content enabled
-BRIDGE=${BRIDGE:-vmbr0}
+BRIDGE=${BRIDGE:-vmbr1}
 VLAN=${VLAN:-}                         # e.g. 20, or empty for untagged
 IP_CIDR=${IP_CIDR:-}                   # e.g. 10.0.20.50/24  (required)
 GATEWAY=${GATEWAY:-}                   # e.g. 10.0.20.1      (required)
@@ -22,6 +22,14 @@ IMG_URL=https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd6
 for v in IP_CIDR GATEWAY ADMIN_CIDR; do [[ -n "${!v}" ]] || { echo "Set $v" >&2; exit 1; }; done
 [[ -f $SSH_KEY_FILE ]] || { echo "No SSH public key at $SSH_KEY_FILE" >&2; exit 1; }
 qm status "$VMID" &>/dev/null && { echo "VMID $VMID already exists" >&2; exit 1; }
+
+# Bridge must exist, and be VLAN-aware if we're tagging.
+ip link show "$BRIDGE" &>/dev/null || { echo "Bridge '$BRIDGE' not found on this host" >&2; exit 1; }
+if [[ -n $VLAN ]]; then
+  [[ $(cat "/sys/class/net/$BRIDGE/bridge/vlan_filtering" 2>/dev/null) == 1 ]] \
+    || { echo "Bridge '$BRIDGE' is not VLAN-aware; tag $VLAN would not work (tick 'VLAN aware' on it)" >&2; exit 1; }
+fi
+echo ">> Network: bridge=$BRIDGE vlan=${VLAN:-none} ip=$IP_CIDR gw=$GATEWAY"
 
 SNIP_DIR=$(pvesm path "$SNIPPETS:snippets/x" | xargs dirname)
 [[ -d $SNIP_DIR ]] || { echo "Storage '$SNIPPETS' has no snippets dir; enable 'Snippets' under Datacenter > Storage" >&2; exit 1; }
@@ -43,7 +51,9 @@ qm create "$VMID" --name "$NAME" --ostype l26 --machine q35 --bios ovmf --efidis
   --cpu host --cores "$CORES" --memory "$MEM_MB" --net0 "$NET" \
   --scsihw virtio-scsi-single --agent enabled=1 --onboot 1 --serial0 socket --vga serial0
 qm importdisk "$VMID" "$WORK/noble.img" "$STORAGE" >/dev/null
-qm set "$VMID" --scsi0 "$STORAGE:vm-$VMID-disk-1,discard=on,ssd=1" --boot order=scsi0
+DISK=$(qm config "$VMID" | awk '/^unused0:/{print $2}')   # works on lvm-thin, zfs, dir, ...
+[[ -n $DISK ]] || { echo "Disk import failed (no unused0)" >&2; exit 1; }
+qm set "$VMID" --scsi0 "$DISK,discard=on,ssd=1" --boot order=scsi0
 qm resize "$VMID" scsi0 "${DISK_GB}G"
 qm set "$VMID" --ide2 "$STORAGE:cloudinit" \
   --ipconfig0 "ip=$IP_CIDR,gw=$GATEWAY" --nameserver "$DNS" \
