@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Dashboard</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#667085; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --line:#e4e7ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2030; --text:#e6e9f0; --muted:#98a2b3; --line:#2b3245; } }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px system-ui,sans-serif; }
+  header { padding:14px 16px; display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; } #summary { color:var(--muted); }
+  main { padding:0 16px 16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; border-left:5px solid var(--ok); }
+  .card.down { border-left-color:var(--bad); } .card.degraded { border-left-color:var(--warn); }
+  .row { display:flex; justify-content:space-between; gap:8px; margin:4px 0; } .muted { color:var(--muted); }
+  .title { font-weight:600; font-size:15px; } .badge { font-size:11px; padding:1px 6px; border-radius:9px; border:1px solid var(--line); color:var(--muted); }
+  .err { color:var(--bad); font-size:12px; word-break:break-word; }
+  button, a.btn { font:inherit; padding:4px 10px; border:1px solid var(--line); border-radius:6px; background:none; color:var(--text); cursor:pointer; text-decoration:none; }
+  .actions { display:flex; gap:6px; margin-top:8px; }
+  section { padding:0 16px 24px; } h2 { font-size:14px; } li { margin:2px 0; font-size:13px; }
+  #frame { position:fixed; inset:0; background:var(--bg); display:none; flex-direction:column; }
+  #frame.on { display:flex; } #frame iframe { flex:1; border:0; } #frame header { border-bottom:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header><h1>Fleet Dashboard</h1><span id="summary"></span></header>
+<main id="grid"></main>
+<section><h2>Recent events</h2><ul id="events"></ul></section>
+<div id="frame"><header><button id="close">← Back</button><b id="ftitle"></b><a class="btn" id="fnew" target="_blank" rel="noopener">Open in new tab</a>
+<span class="muted">Blank frame? The site blocks embedding — use the new tab.</span></header><iframe id="fi"></iframe></div>
+<script>
+const $ = s => document.querySelector(s);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const ago = ts => { if (!ts) return "never"; const s = Math.round(Date.now()/1000 - ts); return s < 90 ? s+"s ago" : s < 5400 ? Math.round(s/60)+"m ago" : Math.round(s/3600)+"h ago"; };
+
+function card(c) {
+  const offline = (c.nodes||[]).filter(n => !n.online);
+  const cls = !c.reachable ? "down" : offline.length ? "degraded" : "";
+  const d = el("div", "card " + cls);
+  const t = el("div", "row"); t.append(el("span","title",c.name), el("span","badge",c.type==="proxmox"?"Proxmox":"Scale"));
+  d.append(t);
+  if (!c.reachable) {
+    d.append(el("div","err","UNREACHABLE — " + c.error), el("div","muted","Last seen " + ago(c.last_ok)));
+  } else {
+    const on = c.nodes.length - offline.length;
+    const rows = [
+      ["Nodes", `${on}/${c.nodes.length} online` + (offline.length ? " (" + offline.map(n=>n.name).join(", ") + " down)" : "")],
+      ["VMs", `${c.vms_running}/${c.vms_total} running`],
+      ["Memory", c.mem_pct == null ? "–" : c.mem_pct + "%"],
+      ["CPU", c.cpu_pct == null ? "–" : c.cpu_pct + "%"],
+      ["Version", c.version || "–"],
+    ];
+    if (c.updates_pending != null) rows.push(["Updates pending", String(c.updates_pending)]);
+    for (const [k,v] of rows) { const r = el("div","row"); r.append(el("span","muted",k), el("span",null,v)); d.append(r); }
+  }
+  d.append(el("div","muted","Checked " + ago(c.checked_at)));
+  const a = el("div","actions");
+  const open = el("a","btn","Open"); open.href = c.link; open.target = "_blank"; open.rel = "noopener";
+  const emb = el("button",null,"Embed"); emb.onclick = () => { $("#ftitle").textContent = c.name; $("#fi").src = c.link; $("#fnew").href = c.link; $("#frame").classList.add("on"); };
+  a.append(open, emb); d.append(a);
+  return d;
+}
+
+async function refresh() {
+  try {
+    const [cl, ev] = await Promise.all([fetch("/api/clusters").then(r=>r.json()), fetch("/api/events").then(r=>r.json())]);
+    const grid = $("#grid"); grid.replaceChildren(...cl.map(card));
+    const down = cl.filter(c => !c.reachable || c.nodes.some(n => !n.online)).length;
+    $("#summary").textContent = `${cl.length} clusters · ${down ? down + " need attention" : "all healthy"}`;
+    $("#events").replaceChildren(...ev.map(e => el("li", null, `${new Date(e.ts*1000).toLocaleString()} — ${e.kind.toUpperCase()}: ${e.message}`)));
+  } catch (e) { $("#summary").textContent = "Dashboard API unreachable"; }
+}
+$("#close").onclick = () => { $("#frame").classList.remove("on"); $("#fi").src = "about:blank"; };
+refresh(); setInterval(refresh, 15000);
+</script>
+</body>
+</html>

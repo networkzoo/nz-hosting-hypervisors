@@ -1,0 +1,82 @@
+import httpx
+import pytest
+
+from app.alerts import AlertEngine
+from app.collectors import poll
+from app.config import ClusterConfig, Config
+from app.store import EventDB
+
+
+def pve_handler(offline=False):
+    def h(req: httpx.Request):
+        p = req.url.path
+        assert req.headers["Authorization"].startswith("PVEAPIToken=")
+        if p.endswith("/version"):
+            return httpx.Response(200, json={"data": {"version": "8.2.4"}})
+        if p.endswith("/cluster/resources"):
+            return httpx.Response(200, json={"data": [
+                {"type": "node", "node": "a", "status": "online", "cpu": 0.5, "maxcpu": 8, "mem": 4, "maxmem": 16},
+                {"type": "node", "node": "b", "status": "offline" if offline else "online", "cpu": 0, "maxcpu": 8, "mem": 0, "maxmem": 16},
+                {"type": "qemu", "status": "running"}, {"type": "lxc", "status": "stopped"},
+                {"type": "qemu", "status": "stopped", "template": 1},
+            ]})
+        if "/apt/update" in p:
+            return httpx.Response(200, json={"data": [{"Package": "x"}] * 3})
+        return httpx.Response(404)
+    return h
+
+
+PVE = ClusterConfig("pve", "proxmox", "https://pve", token_id="u@pve!t", token_secret="s")
+
+
+async def test_proxmox_collect():
+    async with httpx.AsyncClient(transport=httpx.MockTransport(pve_handler(offline=True))) as c:
+        r = await poll(PVE, c)
+    assert r["reachable"] and r["version"] == "8.2.4"
+    assert [n["online"] for n in r["nodes"]] == [True, False]
+    assert (r["vms_running"], r["vms_total"]) == (1, 2)
+    assert r["updates_pending"] == 3  # only the online node is queried
+    assert r["mem_pct"] == 25.0 and r["cpu_pct"] == 50.0
+
+
+async def test_scale_collect():
+    def h(req):
+        p = req.url.path
+        if p.endswith("Cluster"): return httpx.Response(200, json=[{"icosVersion": "9.4.1"}])
+        if p.endswith("Node"): return httpx.Response(200, json=[
+            {"lanIP": "10.0.0.1", "networkStatus": "ONLINE", "memSize": 100},
+            {"lanIP": "10.0.0.2", "networkStatus": "OFFLINE", "memSize": 100}])
+        if p.endswith("VirDomain"): return httpx.Response(200, json=[
+            {"state": "RUNNING", "mem": 50}, {"state": "SHUTOFF", "mem": 50}])
+    cfg = ClusterConfig("s", "scale", "https://s", username="u", password="p")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(h)) as c:
+        r = await poll(cfg, c)
+    assert r["version"] == "9.4.1" and r["mem_pct"] == 25.0
+    assert [n["online"] for n in r["nodes"]] == [True, False]
+
+
+async def test_unreachable_does_not_raise():
+    def h(req): raise httpx.ConnectError("boom")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(h)) as c:
+        r = await poll(PVE, c)
+    assert r["reachable"] is False and "ConnectError" in r["error"]
+
+
+async def test_alert_threshold_and_recovery():
+    sent = []
+    async def notify(kind, cluster, msg): sent.append((kind, msg))
+    eng = AlertEngine(Config(fail_threshold=2), EventDB(":memory:"), notify)
+    down = {"reachable": False, "error": "x", "nodes": []}
+    up = {"reachable": True, "nodes": [{"name": "a", "online": True}]}
+    await eng.evaluate("c", down); assert sent == []          # below threshold
+    await eng.evaluate("c", down); assert len(sent) == 1       # fires once
+    await eng.evaluate("c", down); assert len(sent) == 1       # no repeat spam
+    await eng.evaluate("c", up);   assert sent[-1][0] == "recovered"
+
+
+async def test_node_offline_alert():
+    sent = []
+    async def notify(kind, cluster, msg): sent.append(msg)
+    eng = AlertEngine(Config(fail_threshold=1), EventDB(":memory:"), notify)
+    await eng.evaluate("c", {"reachable": True, "nodes": [{"name": "n2", "online": False}]})
+    assert sent == ["c: node n2 is offline"]

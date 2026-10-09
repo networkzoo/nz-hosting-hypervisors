@@ -1,0 +1,33 @@
+poll_interval: 60          # seconds
+db_path: data/events.db
+
+alerts:
+  fail_threshold: 2        # consecutive failed polls before alerting (avoids blips)
+  # webhook_url_env: ALERT_WEBHOOK   # Slack / Teams / Mattermost incoming webhook
+  smtp:
+    host: smtp.example.com
+    port: 587
+    starttls: true
+    username: alerts@example.com
+    password_env: SMTP_PASSWORD
+    from: alerts@example.com
+    to: [you@example.com]
+
+clusters:
+  # Proxmox: create a token (Datacenter > Permissions > API Tokens) with the
+  # PVEAuditor role. Add Sys.Modify only if you want "updates pending" counts.
+  - name: PVE-Site1
+    type: proxmox
+    url: https://pve1.example.com:8006
+    token_id: monitor@pve!dashboard
+    token_secret_env: PVE1_TOKEN
+    verify_tls: false
+    link: https://pve1.example.com:8006   # or your SSO login URL
+
+  # Scale Computing HyperCore: use a read-only (non-admin) local or SSO-backed user.
+  - name: Scale-Site1
+    type: scale
+    url: https://scale1.example.com
+    username: monitor
+    password_env: SCALE1_PASSWORD
+    verify_tls: false
