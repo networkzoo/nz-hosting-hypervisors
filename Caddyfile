@@ -1,10 +1,13 @@
-# HTTPS front door for the dashboard. Self-signed cert (tls internal) until you have a real hostname.
+# HTTPS front door for the dashboard. Self-signed cert from Caddy's own CA (tls internal).
+# DASH_HOSTS (in .env) lists every address/name you browse to, comma-separated, e.g.
+#   DASH_HOSTS=10.10.0.239, 172.16.124.50, nz-dashboard
+# A browser opening https://<ip> sends no hostname, so the address must be listed here to get a cert.
 # Login users live in caddy/auth.caddy (created by deploy/set-password.sh, never committed).
 {
 	auto_https disable_redirects
 }
 
-:443 {
+{$DASH_HOSTS:localhost} {
 	tls internal
 	import /etc/caddy/auth/auth.caddy
 	reverse_proxy dashboard:8080

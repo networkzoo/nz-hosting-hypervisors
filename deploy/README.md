@@ -25,4 +25,4 @@ cp config.example.yaml config.yaml && cp .env.example .env    # edit both
 deploy/set-password.sh admin                                  # dashboard login (do this BEFORE docker compose up)
 docker compose up -d --build
 ```
-Browse to `https://<ip>` (accept the self-signed cert warning). Only port 443 is exposed, behind the login.
+Set `DASH_HOSTS` in `.env` to every address you browse to (comma-separated), then `docker compose up -d`. Browse to `https://<ip>` (accept the self-signed cert warning). Only port 443 is exposed, behind the login.

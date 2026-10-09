@@ -7,6 +7,6 @@ read -rsp "Again: " PW2; echo
 [[ "$PW" == "$PW2" && -n "$PW" ]] || { echo "Passwords differ or empty" >&2; exit 1; }
 HASH=$(docker run --rm caddy:2 caddy hash-password --plaintext "$PW")
 mkdir -p caddy
-printf 'basicauth {\n\t%s %s\n}\n' "$USER_NAME" "$HASH" > caddy/auth.caddy
+printf 'basic_auth {\n\t%s %s\n}\n' "$USER_NAME" "$HASH" > caddy/auth.caddy
 chmod 600 caddy/auth.caddy
 echo "Wrote caddy/auth.caddy. Apply with: docker compose up -d"
