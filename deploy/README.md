@@ -14,11 +14,15 @@ The VM boots, installs Docker/ufw/etc., reboots once, then is ready. Login: `ssh
 
 Installed by hand from the ISO instead? Run `deploy/bootstrap.sh` as root in the VM.
 
-## Deploy the app
+## Deploy the app (on the VM)
 ```
-sudo -u ops git clone <repo-url> /opt/dashboard   # private repo: use a read-only deploy key
-cd /opt/dashboard && cp config.example.yaml config.yaml && cp .env.example .env
-# edit both, then:
+ssh ops@<ip>
+ssh-keygen -t ed25519 -f ~/.ssh/deploy -N ""      # then add ~/.ssh/deploy.pub as a read-only Deploy key
+                                                  # (GitHub repo > Settings > Deploy keys)
+GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy" git clone -b <branch> git@github.com:networkzoo/nz-hosting-hypervisors.git /opt/dashboard
+cd /opt/dashboard
+cp config.example.yaml config.yaml && cp .env.example .env    # edit both
+deploy/set-password.sh admin                                  # dashboard login
 docker compose up -d --build
 ```
-The app listens on 127.0.0.1:8080 only; the firewall opens 443 for the reverse proxy (next step).
+Browse to `https://<ip>` (accept the self-signed cert warning). Only port 443 is exposed, behind the login.

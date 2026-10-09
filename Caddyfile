@@ -1,0 +1,11 @@
+# HTTPS front door for the dashboard. Self-signed cert (tls internal) until you have a real hostname.
+# Login users live in caddy/auth.caddy (created by deploy/set-password.sh, never committed).
+{
+	auto_https disable_redirects
+}
+
+:443 {
+	tls internal
+	import /etc/caddy/auth.caddy
+	reverse_proxy dashboard:8080
+}

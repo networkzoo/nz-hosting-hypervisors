@@ -2,8 +2,21 @@ services:
   dashboard:
     build: .
     restart: unless-stopped
-    ports: ["127.0.0.1:8080:8080"]   # put your SSO reverse proxy in front
+    expose: ["8080"]                 # only reachable by caddy, not the network
     env_file: .env                   # PVE1_TOKEN=..., SCALE1_PASSWORD=..., SMTP_PASSWORD=...
     volumes:
       - ./config.yaml:/config/config.yaml:ro
       - ./data:/srv/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["443:443"]
+    depends_on: [dashboard]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/auth.caddy:/etc/caddy/auth.caddy:ro
+      - caddy_data:/data
+
+volumes:
+  caddy_data:
