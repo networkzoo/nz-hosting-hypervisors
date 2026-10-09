@@ -12,7 +12,7 @@ VLAN=${VLAN:-}                         # e.g. 20, or empty for untagged
 IP_CIDR=${IP_CIDR:-}                   # e.g. 10.0.20.50/24  (required)
 GATEWAY=${GATEWAY:-}                   # e.g. 10.0.20.1      (required)
 DNS=${DNS:-1.1.1.1}
-ADMIN_CIDR=${ADMIN_CIDR:-}             # who may SSH in, e.g. 10.0.10.0/24 (required)
+ADMIN_CIDR=${ADMIN_CIDR:-}             # who may SSH in; comma-separated, e.g. 10.10.0.0/24,172.16.124.0/24 (required)
 SSH_KEY_FILE=${SSH_KEY_FILE:-/root/.ssh/id_ed25519.pub}
 DISK_GB=${DISK_GB:-20}
 MEM_MB=${MEM_MB:-2048}
@@ -40,10 +40,19 @@ curl -fL -o "$WORK/noble.img" "$IMG_URL"
 
 echo ">> Rendering cloud-init user-data"
 HERE=$(cd "$(dirname "$0")" && pwd)
-sed -e "s|__HOSTNAME__|$NAME|g" \
-    -e "s|__SSH_KEY__|$(cat "$SSH_KEY_FILE")|g" \
-    -e "s|__ADMIN_CIDR__|$ADMIN_CIDR|g" \
-    "$HERE/cloud-init-user-data.yaml" > "$SNIP_DIR/$NAME-user.yaml"
+# One ufw rule per allowed subnet (comma-separated ADMIN_CIDR).
+RULES=""
+IFS=',' read -ra CIDRS <<< "$ADMIN_CIDR"
+for c in "${CIDRS[@]}"; do
+  c=${c// /}
+  [[ $c =~ ^[0-9.]+/[0-9]+$ ]] || { echo "Bad ADMIN_CIDR entry '$c' (want e.g. 10.10.0.0/24)" >&2; exit 1; }
+  RULES+="  - ufw allow from $c to any port 22 proto tcp"$'\n'
+done
+RULES=${RULES%$'\n'}
+sed -e "s|__HOSTNAME__|$NAME|g" -e "s|__SSH_KEY__|$(cat "$SSH_KEY_FILE")|g" \
+    "$HERE/cloud-init-user-data.yaml" \
+  | awk -v rules="$RULES" '$0=="__UFW_SSH_RULES__"{print rules; next} {print}' \
+  > "$SNIP_DIR/$NAME-user.yaml"
 
 echo ">> Creating VM $VMID ($NAME)"
 NET="virtio,bridge=$BRIDGE${VLAN:+,tag=$VLAN},firewall=1"

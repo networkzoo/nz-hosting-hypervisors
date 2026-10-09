@@ -1,5 +1,5 @@
 #cloud-config
-# Rendered by proxmox-create-vm.sh (placeholders: __HOSTNAME__, __SSH_KEY__, __ADMIN_CIDR__).
+# Rendered by proxmox-create-vm.sh (placeholders: __HOSTNAME__, __SSH_KEY__, __UFW_SSH_RULES__).
 hostname: __HOSTNAME__
 manage_etc_hosts: true
 timezone: Pacific/Auckland
@@ -35,7 +35,7 @@ runcmd:
   - systemctl enable --now qemu-guest-agent docker chrony
   - ufw default deny incoming
   - ufw default allow outgoing
-  - ufw allow from __ADMIN_CIDR__ to any port 22 proto tcp
+__UFW_SSH_RULES__
   - ufw allow 443/tcp
   - ufw --force enable
   - install -d -o ops -g ops /opt/dashboard

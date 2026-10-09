@@ -6,7 +6,7 @@
 
 ## Create the VM
 ```
-IP_CIDR=10.10.0.239/24 GATEWAY=10.10.0.254 ADMIN_CIDR=10.10.0.0/24 VLAN=1010 BRIDGE=vmbr1 \
+IP_CIDR=10.10.0.239/24 GATEWAY=10.10.0.254 ADMIN_CIDR=10.10.0.0/24,172.16.124.0/24 VLAN=1010 BRIDGE=vmbr1 \
   ./deploy/proxmox-create-vm.sh
 ```
 Defaults: bridge vmbr1, VMID 9100, 2 vCPU, 2 GB RAM, 20 GB disk, auto-start on boot, UEFI. Override with env vars (see script header).
