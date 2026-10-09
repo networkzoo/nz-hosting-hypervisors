@@ -15,7 +15,7 @@ services:
     depends_on: [dashboard]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./caddy/auth.caddy:/etc/caddy/auth.caddy:ro
+      - ./caddy:/etc/caddy/auth:ro      # holds auth.caddy (created by deploy/set-password.sh)
       - caddy_data:/data
 
 volumes:

@@ -4,4 +4,4 @@ __pycache__/
 config.yaml
 .env
 data/
-caddy/
+caddy/auth.caddy

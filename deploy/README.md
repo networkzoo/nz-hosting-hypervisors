@@ -22,7 +22,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/deploy -N ""      # then add ~/.ssh/deploy.pub a
 GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy" git clone -b <branch> git@github.com:networkzoo/nz-hosting-hypervisors.git /opt/dashboard
 cd /opt/dashboard
 cp config.example.yaml config.yaml && cp .env.example .env    # edit both
-deploy/set-password.sh admin                                  # dashboard login
+deploy/set-password.sh admin                                  # dashboard login (do this BEFORE docker compose up)
 docker compose up -d --build
 ```
 Browse to `https://<ip>` (accept the self-signed cert warning). Only port 443 is exposed, behind the login.

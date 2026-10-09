@@ -6,6 +6,6 @@
 
 :443 {
 	tls internal
-	import /etc/caddy/auth.caddy
+	import /etc/caddy/auth/auth.caddy
 	reverse_proxy dashboard:8080
 }
