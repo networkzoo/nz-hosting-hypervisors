@@ -46,11 +46,12 @@ function card(c) {
     const on = c.nodes.length - offline.length;
     const rows = [
       ["Nodes", `${on}/${c.nodes.length} online` + (offline.length ? " (" + offline.map(n=>n.name).join(", ") + " down)" : "")],
-      ["VMs", `${c.vms_running}/${c.vms_total} running`],
+      ["VMs", c.vms_total == null ? "–" : `${c.vms_running}/${c.vms_total} running`],
       ["Memory", c.mem_pct == null ? "–" : c.mem_pct + "%"],
       ["CPU", c.cpu_pct == null ? "–" : c.cpu_pct + "%"],
       ["Version", c.version || "–"],
     ];
+    if (c.drives_unhealthy) rows.push(["Drives unhealthy", String(c.drives_unhealthy)]);
     if (c.updates_pending != null) rows.push(["Updates pending", String(c.updates_pending)]);
     for (const [k,v] of rows) { const r = el("div","row"); r.append(el("span","muted",k), el("span",null,v)); d.append(r); }
   }

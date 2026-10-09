@@ -65,21 +65,33 @@ async def collect_scale(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
 
     cluster = (await get("Cluster") or [{}])[0]
     nodes_raw = await get("Node")
-    vms = await get("VirDomain")
     nodes = [
         {"name": n.get("lanIP") or n.get("uuid", "?"),
          "online": str(n.get("networkStatus", "")).upper() == "ONLINE"}
         for n in nodes_raw
     ]
-    mem_total = sum(n.get("memSize", 0) for n in nodes_raw)
-    mem_used = sum(v.get("mem", 0) for v in vms if v.get("state") == "RUNNING")
+
+    def avg(key):
+        vals = [n[key] for n in nodes_raw if isinstance(n.get(key), (int, float))]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    # VM counts are best-effort: a role without VirDomain access shouldn't blank the card.
+    try:
+        vms = await get("VirDomain")
+        vms_running = sum(1 for v in vms if v.get("state") == "RUNNING")
+        vms_total = len(vms)
+    except (httpx.HTTPError, ValueError):
+        vms_running = vms_total = None
+
+    drives = [d for n in nodes_raw for d in n.get("drives", [])]
     return {
         "version": cluster.get("icosVersion", ""),
         "nodes": nodes,
-        "vms_running": sum(1 for v in vms if v.get("state") == "RUNNING"),
-        "vms_total": len(vms),
-        "cpu_pct": None,  # not exposed cheaply; add via /rest/v1/Stats if wanted
-        "mem_pct": _pct(mem_used, mem_total),
+        "vms_running": vms_running,
+        "vms_total": vms_total,
+        "cpu_pct": avg("cpuUsage"),
+        "mem_pct": avg("memUsagePercentage"),
+        "drives_unhealthy": sum(1 for d in drives if d.get("isHealthy") is False),
         "updates_pending": None,
     }
 

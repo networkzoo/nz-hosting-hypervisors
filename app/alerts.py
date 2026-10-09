@@ -25,12 +25,14 @@ class AlertEngine:
         if result["reachable"]:
             for n in result["nodes"]:
                 keys[f"{cluster}|node|{n['name']}"] = (n["online"], f"{cluster}: node {n['name']} is offline")
+            bad = result.get("drives_unhealthy") or 0
+            keys[f"{cluster}|drives"] = (bad == 0, f"{cluster}: {bad} drive(s) reported unhealthy")
         for key, (ok, msg) in keys.items():
             if ok:
                 self.fails[key] = 0
                 if key in self.alerted:
                     self.alerted.discard(key)
-                    await self._emit("recovered", cluster, msg.replace("is unreachable", "is back").replace("is offline", "is back online"))
+                    await self._emit("recovered", cluster, msg.replace("is unreachable", "is back").replace("is offline", "is back online").replace("reported unhealthy", "healthy again"))
             else:
                 self.fails[key] = self.fails.get(key, 0) + 1
                 if self.fails[key] >= self.cfg.fail_threshold and key not in self.alerted:

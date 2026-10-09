@@ -42,17 +42,38 @@ async def test_proxmox_collect():
 async def test_scale_collect():
     def h(req):
         p = req.url.path
-        if p.endswith("Cluster"): return httpx.Response(200, json=[{"icosVersion": "9.4.1"}])
+        if p.endswith("Cluster"): return httpx.Response(200, json=[{"icosVersion": "9.7.11"}])
         if p.endswith("Node"): return httpx.Response(200, json=[
-            {"lanIP": "10.0.0.1", "networkStatus": "ONLINE", "memSize": 100},
-            {"lanIP": "10.0.0.2", "networkStatus": "OFFLINE", "memSize": 100}])
-        if p.endswith("VirDomain"): return httpx.Response(200, json=[
-            {"state": "RUNNING", "mem": 50}, {"state": "SHUTOFF", "mem": 50}])
+            {"lanIP": "10.0.0.1", "networkStatus": "ONLINE", "cpuUsage": 10.0, "memUsagePercentage": 40.0,
+             "drives": [{"isHealthy": True}, {"isHealthy": False}]},
+            {"lanIP": "10.0.0.2", "networkStatus": "OFFLINE", "cpuUsage": 30.0, "memUsagePercentage": 60.0, "drives": []}])
+        if p.endswith("VirDomain"): return httpx.Response(200, json=[{"state": "RUNNING"}, {"state": "SHUTOFF"}])
     cfg = ClusterConfig("s", "scale", "https://s", username="u", password="p")
     async with httpx.AsyncClient(transport=httpx.MockTransport(h)) as c:
         r = await poll(cfg, c)
-    assert r["version"] == "9.4.1" and r["mem_pct"] == 25.0
+    assert r["version"] == "9.7.11" and r["cpu_pct"] == 20.0 and r["mem_pct"] == 50.0
     assert [n["online"] for n in r["nodes"]] == [True, False]
+    assert (r["vms_running"], r["vms_total"], r["drives_unhealthy"]) == (1, 2, 1)
+
+
+async def test_scale_vms_optional():
+    def h(req):
+        p = req.url.path
+        if p.endswith("Cluster"): return httpx.Response(200, json=[{"icosVersion": "9"}])
+        if p.endswith("Node"): return httpx.Response(200, json=[{"lanIP": "n", "networkStatus": "ONLINE"}])
+        return httpx.Response(403)  # VirDomain denied
+    cfg = ClusterConfig("s", "scale", "https://s", username="u", password="p")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(h)) as c:
+        r = await poll(cfg, c)
+    assert r["reachable"] and r["vms_total"] is None and len(r["nodes"]) == 1
+
+
+async def test_drive_alert():
+    sent = []
+    async def notify(kind, cluster, msg): sent.append(msg)
+    eng = AlertEngine(Config(fail_threshold=1), EventDB(":memory:"), notify)
+    await eng.evaluate("c", {"reachable": True, "nodes": [], "drives_unhealthy": 2})
+    assert sent == ["c: 2 drive(s) reported unhealthy"]
 
 
 async def test_unreachable_does_not_raise():
