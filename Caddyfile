@@ -1,13 +1,21 @@
 # HTTPS front door for the dashboard. Self-signed cert from Caddy's own CA (tls internal).
-# DASH_HOSTS (in .env) lists every address/name you browse to, comma-separated, e.g.
-#   DASH_HOSTS=10.10.0.239, 172.16.124.50, nz-dashboard
-# A browser opening https://<ip> sends no hostname, so the address must be listed here to get a cert.
+#
+# Browsing to a bare IP sends no hostname, and Docker rewrites the destination address, so Caddy
+# can't match the IP to a certificate. default_sni/fallback_sni make it serve the "dashboard.local"
+# certificate in that case (and for any name not listed), so every address works. The browser shows
+# a certificate warning anyway (self-signed), so the name mismatch changes nothing for the user.
+#
+# DASH_HOSTS (in .env) optionally lists extra names to get their own certificates, comma + space
+# separated, e.g.  DASH_HOSTS=nz-dashboard, 10.10.0.239
+#
 # Login users live in caddy/auth.caddy (created by deploy/set-password.sh, never committed).
 {
 	auto_https disable_redirects
+	default_sni dashboard.local
+	fallback_sni dashboard.local
 }
 
-{$DASH_HOSTS:localhost} {
+dashboard.local, {$DASH_HOSTS:localhost} {
 	tls internal
 	import /etc/caddy/auth/auth.caddy
 	reverse_proxy dashboard:8080
