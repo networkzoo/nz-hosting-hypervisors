@@ -26,3 +26,8 @@ deploy/set-password.sh admin                                  # dashboard login 
 docker compose up -d --build
 ```
 Set `DASH_HOSTS` in `.env` to every address you browse to (comma-separated), then `docker compose up -d`. Browse to `https://<ip>` (accept the self-signed cert warning). Only port 443 is exposed, behind the login.
+
+## Adding Proxmox clusters
+On **one node of each cluster**, as root: `deploy/pve-create-monitor.sh "<cluster name>"`.
+It creates a read-only `monitor@pve` user and a `dashboard` API token, tests it, and prints the
+`.env` and `config.yaml` lines to paste. Re-run with `--rotate` to replace a token.
