@@ -47,7 +47,7 @@ def read_env():
     vals = {}
     if os.path.exists(ENVFILE):
         for line in open(ENVFILE, encoding="utf-8"):
-            m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
+            m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_.-]*)=(.*)$", line.rstrip("\n"))
             if m:
                 v = m.group(2).strip()
                 if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
