@@ -41,8 +41,7 @@ $ErrorActionPreference = 'Stop'
 $Repos = @(
     @{ Name = 'doc-manager';            Legacy = 'doc-manager';                  Url = 'https://github.com/networkzoo/doc-manager.git';             Branch = 'main' },
     @{ Name = 'hypervisor-web';          Legacy = 'Scale and Prox hosted page';   Url = 'https://github.com/networkzoo/nz-hosting-hypervisors.git';  Branch = 'claude/optimistic-davinci-65lq7d' },
-    # Fill in the Url for this one: run  git -C "<old folder>" remote -v  and paste it here.
-    @{ Name = 'tools';                  Legacy = 'Tools (tools.networkzoo.ca)';  Url = '';                                                          Branch = '' }
+    @{ Name = 'tools';                  Legacy = 'Tools (tools.networkzoo.ca)';  Url = 'https://github.com/networkzoo/networkzoo-tools.git';       Branch = 'master' }
 )
 
 function Write-Step($msg) { Write-Host ">> $msg" -ForegroundColor Cyan }
