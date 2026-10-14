@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Add / check / list clusters in config.yaml without hand-editing YAML.
+
+  python3 deploy/cluster_config.py check
+  python3 deploy/cluster_config.py list
+  python3 deploy/cluster_config.py add proxmox Aviary https://172.16.124.30:8006 [--apply]
+  python3 deploy/cluster_config.py add scale   CDAC   https://10.4.33.10 --user monitor [--apply]
+
+`add` asks for the secret (hidden input) and stores it in .env, so nothing sensitive is typed on
+the command line. --apply recreates the dashboard container afterwards. A backup of config.yaml
+is kept as config.yaml.bak. Defaults: Proxmox token id monitor@pve!dashboard, TLS verify off.
+Run from anywhere; files are found relative to this script's repo root.
+"""
+import argparse
+import getpass
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+try:
+    import yaml
+except ImportError:
+    sys.exit("PyYAML is missing. Install it with:  sudo apt install python3-yaml")
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG = os.path.join(ROOT, "config.yaml")
+ENVFILE = os.path.join(ROOT, ".env")
+
+
+def die(msg):
+    sys.exit(f"ERROR: {msg}")
+
+
+def load_yaml(text, label="config.yaml"):
+    try:
+        return yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        mark = getattr(e, "problem_mark", None)
+        where = f" (line {mark.line + 1}, column {mark.column + 1})" if mark else ""
+        die(f"{label} is not valid YAML{where}: {getattr(e, 'problem', e)}\n"
+            "       Check that every '- name:' starts at the same indentation.")
+
+
+def read_env():
+    vals = {}
+    if os.path.exists(ENVFILE):
+        for line in open(ENVFILE, encoding="utf-8"):
+            m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
+            if m:
+                v = m.group(2).strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                    v = v[1:-1]
+                vals[m.group(1)] = v
+    return vals
+
+
+def write_env_var(var, secret):
+    if "\n" in secret or "'" in secret:
+        die("secret can't contain a newline or a single quote (') - choose another or edit .env by hand")
+    line = f"{var}='{secret}'\n"
+    lines = open(ENVFILE, encoding="utf-8").read().splitlines(True) if os.path.exists(ENVFILE) else []
+    out, done = [], False
+    for l in lines:
+        if re.match(rf"\s*{re.escape(var)}=", l):
+            out.append(line)
+            done = True
+        else:
+            out.append(l)
+    if not done:
+        if out and not out[-1].endswith("\n"):
+            out[-1] += "\n"
+        out.append(line)
+    with open(ENVFILE, "w", encoding="utf-8") as f:
+        f.writelines(out)
+    os.chmod(ENVFILE, 0o600)  # holds secrets: owner-only
+
+
+def check(quiet=False):
+    if not os.path.exists(CONFIG):
+        die(f"{CONFIG} not found")
+    cfg = load_yaml(open(CONFIG, encoding="utf-8").read())
+    env = read_env()
+    clusters = cfg.get("clusters") or []
+    problems, seen = 0, set()
+    for i, c in enumerate(clusters, 1):
+        name = c.get("name", f"#{i}")
+        errs = []
+        for k in ("name", "type", "url"):
+            if not c.get(k):
+                errs.append(f"missing '{k}'")
+        if name in seen:
+            errs.append("duplicate name")
+        seen.add(name)
+        if c.get("type") == "proxmox":
+            need = [("token_id", None), ("token_secret_env", "token_secret_env")]
+        elif c.get("type") == "scale":
+            need = [("username", None), ("password_env", "password_env")]
+        else:
+            need = []
+            errs.append(f"type must be proxmox or scale (got {c.get('type')!r})")
+        for key, envkey in need:
+            if not c.get(key):
+                errs.append(f"missing '{key}'")
+            elif envkey and not env.get(c[key]):
+                errs.append(f"{c[key]} is not set in .env")
+        status = "OK " if not errs else "BAD"
+        if not quiet or errs:
+            print(f"  [{status}] {name:<20} {c.get('type', '?'):<8} {c.get('url', '')}"
+                  + (f"   <- {'; '.join(errs)}" if errs else ""))
+        problems += bool(errs)
+    if not quiet:
+        print(f"{len(clusters)} cluster(s), {problems} with problems")
+    return problems
+
+
+def add(args):
+    if not os.path.exists(CONFIG):
+        die(f"{CONFIG} not found - copy config.example.yaml to config.yaml first")
+    raw = open(CONFIG, encoding="utf-8").read()
+    cfg = load_yaml(raw)
+    names = [c.get("name") for c in (cfg.get("clusters") or [])]
+    if args.name in names:
+        die(f"a cluster named {args.name!r} already exists")
+    if not re.match(r"^https?://\S+$", args.url):
+        die("url must start with https:// (or http://) and contain no spaces")
+
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", args.name).strip("_").upper()
+    if args.type == "proxmox":
+        envvar = args.env or f"PVE_{slug}_TOKEN"
+        fields = [("type", "proxmox"), ("url", args.url), ("token_id", args.token_id),
+                  ("token_secret_env", envvar)]
+        prompt = f"API token secret for {args.name} (stored in .env as {envvar})"
+    else:
+        envvar = args.env or f"SCALE_{slug}_PASSWORD"
+        fields = [("type", "scale"), ("url", args.url), ("username", args.user),
+                  ("password_env", envvar)]
+        prompt = f"Password for {args.user} on {args.name} (stored in .env as {envvar})"
+    fields.append(("verify_tls", "true" if args.verify_tls else "false"))
+
+    # Work out the indentation already used by the list, so the new entry lines up.
+    text = raw
+    if re.search(r"(?m)^clusters:\s*\[\s*\]\s*$", text):
+        text = re.sub(r"(?m)^clusters:\s*\[\s*\]\s*$", "clusters:", text)
+    lines = text.splitlines()
+    try:
+        ci = next(i for i, l in enumerate(lines) if re.match(r"^clusters:\s*(#.*)?$", l))
+    except StopIteration:
+        die("no 'clusters:' section found in config.yaml - add a line 'clusters:' at the end first")
+    for l in lines[ci + 1:]:
+        if l.strip() and not l.startswith((" ", "-", "#")):
+            die("'clusters:' is not the last section of config.yaml, so I can't append safely.\n"
+                "       Move it to the end of the file, or edit by hand.")
+    dash = 2
+    for l in lines[ci + 1:]:
+        m = re.match(r"^(\s*)- name:", l)
+        if m:
+            dash = len(m.group(1))
+            break
+    q = lambda s: '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    quoted = {"url", "token_id"}
+    block = [" " * dash + f"- name: {q(args.name)}"]
+    for k, v in fields:
+        block.append(" " * (dash + 2) + f"{k}: {q(v) if k in quoted else v}")
+    new_text = "\n".join(lines).rstrip("\n") + "\n" + "\n".join(block) + "\n"
+
+    # Prove the result is valid and contains our entry before touching anything.
+    parsed = load_yaml(new_text, "the new config")
+    got = [c for c in parsed.get("clusters", []) if c.get("name") == args.name]
+    if len(got) != 1:
+        die("internal check failed: new entry did not parse as expected; nothing was changed")
+
+    secret = os.environ.get("CLUSTER_SECRET")
+    if secret is None:
+        secret = getpass.getpass(prompt + " (Enter to skip): ")
+    shutil.copyfile(CONFIG, CONFIG + ".bak")
+    with open(CONFIG, "w", encoding="utf-8") as f:
+        f.write(new_text)
+    if secret:
+        write_env_var(envvar, secret)
+    print(f"Added {args.name!r}. Backup: {CONFIG}.bak")
+    problems = check(quiet=True)
+    if problems:
+        print("Some clusters still have problems (see above); run 'check' for details.")
+    if args.apply:
+        print("Restarting dashboard...")
+        subprocess.run(["docker", "compose", "up", "-d", "--force-recreate", "dashboard"], cwd=ROOT, check=True)
+        print("Done. Give it a minute, then refresh the page.")
+    else:
+        print("Apply with:  docker compose up -d --force-recreate dashboard   (or re-run with --apply)")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("check", help="validate config.yaml and .env")
+    sub.add_parser("list", help="list configured clusters")
+    a = sub.add_parser("add", help="add a cluster")
+    a.add_argument("type", choices=["proxmox", "scale"])
+    a.add_argument("name")
+    a.add_argument("url")
+    a.add_argument("--token-id", default="monitor@pve!dashboard", help="Proxmox only")
+    a.add_argument("--user", default="monitor", help="Scale only")
+    a.add_argument("--env", help="name of the .env variable for the secret (default derived from the name)")
+    a.add_argument("--verify-tls", action="store_true", help="verify the HTTPS certificate (default: off)")
+    a.add_argument("--apply", action="store_true", help="recreate the dashboard container afterwards")
+    args = p.parse_args()
+    if args.cmd == "check":
+        sys.exit(1 if check() else 0)
+    elif args.cmd == "list":
+        check()
+    else:
+        add(args)
+
+
+if __name__ == "__main__":
+    main()

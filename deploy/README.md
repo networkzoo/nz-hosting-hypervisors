@@ -31,3 +31,15 @@ Set `DASH_HOSTS` in `.env` to every address you browse to (comma-separated), the
 On **one node of each cluster**, as root: `deploy/pve-create-monitor.sh "<cluster name>"`.
 It creates a read-only `monitor@pve` user and a `dashboard` API token, tests it, and prints the
 `.env` and `config.yaml` lines to paste. Re-run with `--rotate` to replace a token.
+
+## Adding clusters to the dashboard (no hand-editing YAML)
+On the VM, from `/opt/dashboard`:
+```
+python3 deploy/cluster_config.py add proxmox "Aviary" https://172.16.124.30:8006 --apply
+python3 deploy/cluster_config.py add scale   "CDAC"   https://10.4.33.10 --user monitor --apply
+python3 deploy/cluster_config.py check      # validates config.yaml and that every secret is in .env
+python3 deploy/cluster_config.py list
+```
+It prompts for the secret (hidden), writes it to `.env`, appends a correctly indented entry, keeps a
+`config.yaml.bak`, and with `--apply` recreates the dashboard container. Defaults: Proxmox token id
+`monitor@pve!dashboard`, TLS verification off (`--verify-tls` to turn on).
