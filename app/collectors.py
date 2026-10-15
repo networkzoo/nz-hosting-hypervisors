@@ -38,14 +38,18 @@ async def collect_proxmox(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
     guests = [r for r in resources if r["type"] in ("qemu", "lxc") and not r.get("template")]
     node_res = [r for r in resources if r["type"] == "node" and r.get("status") == "online"]
 
-    # Pending apt updates: needs Sys.Modify on the token, so best-effort only.
+    # Pending apt updates: Proxmox only reveals these to an account with Sys.Modify, so this is
+    # best-effort. Without that permission the counts simply stay unknown (None).
     pending = 0
     try:
         for n in nodes:
             if n["online"]:
-                pending += len(await get(f"/nodes/{n['name']}/apt/update"))
+                n["updates"] = len(await get(f"/nodes/{n['name']}/apt/update"))
+                pending += n["updates"]
     except (httpx.HTTPError, KeyError, ValueError):
         pending = None
+        for n in nodes:
+            n.pop("updates", None)
 
     vms = _sort_vms([
         {"name": g.get("name") or f"{g['type']}/{g.get('vmid', '?')}",

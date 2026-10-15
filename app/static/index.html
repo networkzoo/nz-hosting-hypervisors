@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fleet Dashboard</title>
-<link rel="icon" type="image/png" href="/static/nz-256.png">
+<link rel="icon" type="image/png" href="/static/NZ-256.png">
 <style>
-  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#667085; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --line:#e4e7ec; --logo-bg:transparent; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2030; --text:#e6e9f0; --muted:#98a2b3; --line:#2b3245; --logo-bg:#fff; } }
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#667085; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --line:#e4e7ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2030; --text:#e6e9f0; --muted:#98a2b3; --line:#2b3245; } }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px system-ui,sans-serif; }
   header.top { padding:14px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  header.top img { height:36px; width:36px; border-radius:6px; background:var(--logo-bg); padding:2px; }
+  header.top img { height:36px; width:36px; border-radius:6px; }
   h1 { font-size:18px; margin:0; } #summary { color:var(--muted); }
   main { padding:0 16px 16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr)); gap:12px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; border-left:5px solid var(--ok); min-width:0; }
@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-<header class="top"><img id="logo" src="/static/nz-256.png" alt="" onerror="this.style.display='none'"><h1>Fleet Dashboard</h1><span id="summary"></span></header>
+<header class="top"><img id="logo" src="/static/NZ-256.png" alt="" onerror="this.style.display='none'"><h1>Fleet Dashboard</h1><span id="summary"></span></header>
 <section><div id="problems" class="problems none">Loading…</div></section>
 <main id="grid"></main>
 <section style="padding-top:16px">
@@ -98,6 +98,11 @@ function vmDetails(c) {
   return d;
 }
 
+// Proxmox console deep link to a node's Updates page (tab ids can differ between PVE versions).
+const PVE_UPDATES_HASH = ":4:31::::7::";
+const pveUpdatesUrl = (c, node) => `${c.url}/#v1:0:=node%2F${encodeURIComponent(node)}${PVE_UPDATES_HASH}`;
+const openConsole = (title, url) => { $("#ftitle").textContent = title; $("#fi").src = url; $("#fnew").href = url; $("#frame").classList.add("on"); };
+
 function card(c) {
   const offline = (c.nodes||[]).filter(n => !n.online);
   const cls = !c.reachable ? "down" : (offline.length || c.drives_unhealthy) ? "degraded" : "";
@@ -119,12 +124,23 @@ function card(c) {
     if (c.updates_pending != null) rows.push(["Updates pending", String(c.updates_pending)]);
     for (const [k,v] of rows) { const r = el("div","row"); r.append(el("span","muted",k), el("span",null,v)); d.append(r); }
     const vd = vmDetails(c); if (vd) d.append(vd);
+    if (c.type === "proxmox" && c.url) {
+      const u = el("div", "actions");
+      u.append(el("span", "muted", "Updates:"));
+      for (const n of c.nodes.filter(n => n.online)) {
+        const b = el("button", null, n.updates == null ? n.name : `${n.name} (${n.updates})`); b.type = "button";
+        b.title = `Open ${n.name}'s Updates page in the console (you'll be asked to log in)`;
+        b.onclick = () => openConsole(`${c.name} / ${n.name} — Updates`, pveUpdatesUrl(c, n.name));
+        u.append(b);
+      }
+      d.append(u);
+    }
   }
   d.append(el("div","muted","Checked " + ago(c.checked_at)));
   const a = el("div","actions");
   const open = el("a","btn","Open"); open.href = c.link; open.target = "_blank"; open.rel = "noopener";
   const emb = el("button",null,"Embed"); emb.type = "button";
-  emb.onclick = () => { $("#ftitle").textContent = c.name; $("#fi").src = c.link; $("#fnew").href = c.link; $("#frame").classList.add("on"); };
+  emb.onclick = () => openConsole(c.name, c.link);
   a.append(open, emb); d.append(a);
   return d;
 }

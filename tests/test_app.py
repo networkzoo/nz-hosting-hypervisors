@@ -41,6 +41,7 @@ async def test_proxmox_collect():
     assert [(v["name"], v["running"], v["kind"]) for v in r["vms"]] == [
         ("api", True, "vm"), ("web1", True, "vm"), ("Backup", False, "ct")]
     assert r["updates_pending"] == 3  # only the online node is queried
+    assert [n.get("updates") for n in r["nodes"]] == [3, None]
     assert r["mem_pct"] == 25.0 and r["cpu_pct"] == 50.0
 
 
@@ -107,3 +108,13 @@ async def test_node_offline_alert():
     eng = AlertEngine(Config(fail_threshold=1), EventDB(":memory:"), notify)
     await eng.evaluate("c", {"reachable": True, "nodes": [{"name": "n2", "online": False}]})
     assert sent == ["c: node n2 is offline"]
+
+
+async def test_proxmox_updates_unknown_without_permission():
+    def h(req):
+        if "/apt/update" in req.url.path: return httpx.Response(403)
+        return pve_handler()(req)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(h)) as c:
+        r = await poll(PVE, c)
+    assert r["reachable"] and r["updates_pending"] is None
+    assert all("updates" not in n for n in r["nodes"])

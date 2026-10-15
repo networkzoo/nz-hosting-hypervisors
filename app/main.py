@@ -23,7 +23,7 @@ async def poll_loop(cfg, engine):
         results = await asyncio.gather(*(poll(c) for c in cfg.clusters))
         for c, r in zip(cfg.clusters, results):
             prev = state.get(c.name, {})
-            r["name"], r["type"], r["link"] = c.name, c.type, c.link or c.url
+            r["name"], r["type"], r["link"], r["url"] = c.name, c.type, c.link or c.url, c.url
             r["checked_at"] = time.time()
             r["last_ok"] = r["checked_at"] if r["reachable"] else prev.get("last_ok")
             state[c.name] = r

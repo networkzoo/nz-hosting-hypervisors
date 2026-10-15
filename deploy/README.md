@@ -43,3 +43,9 @@ python3 deploy/cluster_config.py list
 It prompts for the secret (hidden), writes it to `.env`, appends a correctly indented entry, keeps a
 `config.yaml.bak`, and with `--apply` recreates the dashboard container. Defaults: Proxmox token id
 `monitor@pve!dashboard`, TLS verification off (`--verify-tls` to turn on).
+
+### Pending-updates counts (optional, Proxmox)
+`deploy/pve-create-monitor.sh "<name>" --with-updates` also grants `Sys.Modify` on `/nodes` (a separate
+`DashboardUpdates` role) so the dashboard can show per-node pending updates. That is more than read-only,
+so it is opt-in per cluster. Re-running it on an existing cluster adds the grant without touching the token.
+Revoke with `pveum acl delete /nodes --users monitor@pve --roles DashboardUpdates`.
