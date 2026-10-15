@@ -15,6 +15,11 @@ def _pct(used, total):
     return round(100 * used / total, 1) if total else None
 
 
+def _sort_vms(vms):
+    """Running first, then by name."""
+    return sorted(vms, key=lambda v: (not v["running"], v["name"].lower()))
+
+
 async def collect_proxmox(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
     headers = {"Authorization": f"PVEAPIToken={c.token_id}={c.token_secret}"}
 
@@ -42,9 +47,17 @@ async def collect_proxmox(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
     except (httpx.HTTPError, KeyError, ValueError):
         pending = None
 
+    vms = _sort_vms([
+        {"name": g.get("name") or f"{g['type']}/{g.get('vmid', '?')}",
+         "running": g.get("status") == "running",
+         "state": g.get("status", "unknown"),
+         "kind": "ct" if g["type"] == "lxc" else "vm"}
+        for g in guests
+    ])
     return {
         "version": version,
         "nodes": nodes,
+        "vms": vms,
         "vms_running": sum(1 for g in guests if g.get("status") == "running"),
         "vms_total": len(guests),
         "cpu_pct": _pct(sum(r.get("cpu", 0) * r.get("maxcpu", 0) for r in node_res),
@@ -77,16 +90,24 @@ async def collect_scale(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
 
     # VM counts are best-effort: a role without VirDomain access shouldn't blank the card.
     try:
-        vms = await get("VirDomain")
-        vms_running = sum(1 for v in vms if v.get("state") == "RUNNING")
-        vms_total = len(vms)
+        raw_vms = await get("VirDomain")
+        vm_list = _sort_vms([
+            {"name": v.get("name") or v.get("uuid", "?"),
+             "running": v.get("state") == "RUNNING",
+             "state": str(v.get("state", "unknown")).lower(),
+             "kind": "vm"}
+            for v in raw_vms
+        ])
+        vms_running = sum(1 for v in vm_list if v["running"])
+        vms_total = len(vm_list)
     except (httpx.HTTPError, ValueError):
-        vms_running = vms_total = None
+        vm_list, vms_running, vms_total = None, None, None
 
     drives = [d for n in nodes_raw for d in n.get("drives", [])]
     return {
         "version": cluster.get("icosVersion", ""),
         "nodes": nodes,
+        "vms": vm_list,
         "vms_running": vms_running,
         "vms_total": vms_total,
         "cpu_pct": avg("cpuUsage"),

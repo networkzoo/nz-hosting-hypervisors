@@ -17,8 +17,10 @@ def pve_handler(offline=False):
             return httpx.Response(200, json={"data": [
                 {"type": "node", "node": "a", "status": "online", "cpu": 0.5, "maxcpu": 8, "mem": 4, "maxmem": 16},
                 {"type": "node", "node": "b", "status": "offline" if offline else "online", "cpu": 0, "maxcpu": 8, "mem": 0, "maxmem": 16},
-                {"type": "qemu", "status": "running"}, {"type": "lxc", "status": "stopped"},
-                {"type": "qemu", "status": "stopped", "template": 1},
+                {"type": "qemu", "status": "running", "name": "web1", "vmid": 100},
+                {"type": "lxc", "status": "stopped", "name": "Backup", "vmid": 101},
+                {"type": "qemu", "status": "running", "name": "api", "vmid": 102},
+                {"type": "qemu", "status": "stopped", "template": 1, "name": "tmpl", "vmid": 9000},
             ]})
         if "/apt/update" in p:
             return httpx.Response(200, json={"data": [{"Package": "x"}] * 3})
@@ -34,7 +36,10 @@ async def test_proxmox_collect():
         r = await poll(PVE, c)
     assert r["reachable"] and r["version"] == "8.2.4"
     assert [n["online"] for n in r["nodes"]] == [True, False]
-    assert (r["vms_running"], r["vms_total"]) == (1, 2)
+    assert (r["vms_running"], r["vms_total"]) == (2, 3)
+    # running first (by name), then not running; templates excluded; containers flagged
+    assert [(v["name"], v["running"], v["kind"]) for v in r["vms"]] == [
+        ("api", True, "vm"), ("web1", True, "vm"), ("Backup", False, "ct")]
     assert r["updates_pending"] == 3  # only the online node is queried
     assert r["mem_pct"] == 25.0 and r["cpu_pct"] == 50.0
 
@@ -47,13 +52,14 @@ async def test_scale_collect():
             {"lanIP": "10.0.0.1", "networkStatus": "ONLINE", "cpuUsage": 10.0, "memUsagePercentage": 40.0,
              "drives": [{"isHealthy": True}, {"isHealthy": False}]},
             {"lanIP": "10.0.0.2", "networkStatus": "OFFLINE", "cpuUsage": 30.0, "memUsagePercentage": 60.0, "drives": []}])
-        if p.endswith("VirDomain"): return httpx.Response(200, json=[{"state": "RUNNING"}, {"state": "SHUTOFF"}])
+        if p.endswith("VirDomain"): return httpx.Response(200, json=[{"state": "SHUTOFF", "name": "zeta"}, {"state": "RUNNING", "name": "Alpha"}])
     cfg = ClusterConfig("s", "scale", "https://s", username="u", password="p")
     async with httpx.AsyncClient(transport=httpx.MockTransport(h)) as c:
         r = await poll(cfg, c)
     assert r["version"] == "9.7.11" and r["cpu_pct"] == 20.0 and r["mem_pct"] == 50.0
     assert [n["online"] for n in r["nodes"]] == [True, False]
     assert (r["vms_running"], r["vms_total"], r["drives_unhealthy"]) == (1, 2, 1)
+    assert [(v["name"], v["running"], v["state"]) for v in r["vms"]] == [("Alpha", True, "running"), ("zeta", False, "shutoff")]
 
 
 async def test_scale_vms_optional():
@@ -65,7 +71,7 @@ async def test_scale_vms_optional():
     cfg = ClusterConfig("s", "scale", "https://s", username="u", password="p")
     async with httpx.AsyncClient(transport=httpx.MockTransport(h)) as c:
         r = await poll(cfg, c)
-    assert r["reachable"] and r["vms_total"] is None and len(r["nodes"]) == 1
+    assert r["reachable"] and r["vms_total"] is None and r["vms"] is None and len(r["nodes"]) == 1
 
 
 async def test_drive_alert():

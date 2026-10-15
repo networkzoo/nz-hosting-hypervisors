@@ -4,39 +4,103 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fleet Dashboard</title>
+<link rel="icon" type="image/png" href="/static/nz-256.png">
 <style>
-  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#667085; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --line:#e4e7ec; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2030; --text:#e6e9f0; --muted:#98a2b3; --line:#2b3245; } }
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1c2230; --muted:#667085; --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --line:#e4e7ec; --logo-bg:transparent; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2030; --text:#e6e9f0; --muted:#98a2b3; --line:#2b3245; --logo-bg:#fff; } }
+  * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px system-ui,sans-serif; }
-  header { padding:14px 16px; display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  header.top { padding:14px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header.top img { height:36px; width:36px; border-radius:6px; background:var(--logo-bg); padding:2px; }
   h1 { font-size:18px; margin:0; } #summary { color:var(--muted); }
-  main { padding:0 16px 16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; border-left:5px solid var(--ok); }
+  main { padding:0 16px 16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; border-left:5px solid var(--ok); min-width:0; }
   .card.down { border-left-color:var(--bad); } .card.degraded { border-left-color:var(--warn); }
-  .row { display:flex; justify-content:space-between; gap:8px; margin:4px 0; } .muted { color:var(--muted); }
-  .title { font-weight:600; font-size:15px; } .badge { font-size:11px; padding:1px 6px; border-radius:9px; border:1px solid var(--line); color:var(--muted); }
+  .row { display:flex; justify-content:space-between; gap:8px; margin:4px 0; } .row > span:last-child { text-align:right; overflow-wrap:anywhere; }
+  .muted { color:var(--muted); } .title { font-weight:600; font-size:15px; overflow-wrap:anywhere; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:9px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; align-self:flex-start; }
   .err { color:var(--bad); font-size:12px; word-break:break-word; }
-  button, a.btn { font:inherit; padding:4px 10px; border:1px solid var(--line); border-radius:6px; background:none; color:var(--text); cursor:pointer; text-decoration:none; }
-  .actions { display:flex; gap:6px; margin-top:8px; }
-  section { padding:0 16px 24px; } h2 { font-size:14px; } li { margin:2px 0; font-size:13px; }
-  #frame { position:fixed; inset:0; background:var(--bg); display:none; flex-direction:column; }
-  #frame.on { display:flex; } #frame iframe { flex:1; border:0; } #frame header { border-bottom:1px solid var(--line); }
+  button, a.btn { font:inherit; padding:5px 10px; border:1px solid var(--line); border-radius:6px; background:none; color:var(--text); cursor:pointer; text-decoration:none; }
+  .actions { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  section { padding:0 16px 20px; }
+  h2 { font-size:14px; margin:0 0 8px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  h2 small { font-weight:400; color:var(--muted); }
+  ul.plain { list-style:none; margin:0; padding:0; } li { margin:3px 0; font-size:13px; overflow-wrap:anywhere; }
+  .problems { border:1px solid var(--bad); border-radius:8px; padding:10px 12px; background:var(--card); }
+  .problems.none { border-color:var(--line); color:var(--muted); }
+  .problems li::before { content:"●"; color:var(--bad); margin-right:6px; }
+  .ev.new { color:var(--text); font-weight:600; } .ev.old { color:var(--muted); } .ev.cleared { opacity:.55; font-style:italic; }
+  details.vms { margin:6px 0 0; } details.vms summary { cursor:pointer; color:var(--muted); font-size:13px; }
+  .vmlist { max-height:220px; overflow:auto; margin-top:6px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
+  .vmlist h4 { margin:6px 0 2px; font-size:12px; color:var(--muted); font-weight:600; } .vmlist h4:first-child { margin-top:0; }
+  .vmlist li::before { content:"●"; margin-right:6px; color:var(--ok); } .vmlist .off li::before { color:var(--muted); }
+  .vmlist .kind { font-size:11px; color:var(--muted); margin-left:4px; }
+  #frame { position:fixed; inset:0; background:var(--bg); display:none; flex-direction:column; z-index:10; }
+  #frame.on { display:flex; } #frame iframe { flex:1; border:0; }
+  #frame header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 </style>
 </head>
 <body>
-<header><h1>Fleet Dashboard</h1><span id="summary"></span></header>
+<header class="top"><img id="logo" src="/static/nz-256.png" alt="" onerror="this.style.display='none'"><h1>Fleet Dashboard</h1><span id="summary"></span></header>
+<section><div id="problems" class="problems none">Loading…</div></section>
 <main id="grid"></main>
-<section><h2>Recent events</h2><ul id="events"></ul></section>
-<div id="frame"><header><button id="close">← Back</button><b id="ftitle"></b><a class="btn" id="fnew" target="_blank" rel="noopener">Open in new tab</a>
-<span class="muted">Blank frame? The site blocks embedding — use the new tab.</span></header><iframe id="fi"></iframe></div>
+<section style="padding-top:16px">
+  <h2>Recent events <small id="evmeta"></small>
+    <button id="clear" type="button">Clear</button>
+    <button id="showcleared" type="button" hidden></button></h2>
+  <ul id="events" class="plain"></ul>
+</section>
+<div id="frame"><header><button id="close" type="button">← Back</button><b id="ftitle"></b><a class="btn" id="fnew" target="_blank" rel="noopener">Open in new tab</a>
+<span class="muted">Blank frame? The site blocks embedding — use the new tab.</span></header><iframe id="fi" title="Cluster console"></iframe></div>
 <script>
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const ago = ts => { if (!ts) return "never"; const s = Math.round(Date.now()/1000 - ts); return s < 90 ? s+"s ago" : s < 5400 ? Math.round(s/60)+"m ago" : Math.round(s/3600)+"h ago"; };
 
+// Per-person state lives in this browser only (localStorage). Every access is guarded: it can be blocked.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} },
+};
+const nowS = Date.now() / 1000;
+// "New" = arrived since the previous page load. Auto-refresh doesn't age them; a reload does.
+const prevSeen = store.get("seenUntil");
+const newSince = prevSeen === null ? nowS : parseFloat(prevSeen);
+store.set("seenUntil", nowS);
+let clearedBefore = parseFloat(store.get("clearedBefore") || "0");
+let showCleared = false;
+let lastEvents = [];
+
+const openVMs = new Set();   // which cards have their VM list expanded; survives the 15s redraw
+
+function vmDetails(c) {
+  if (c.vms == null) return null;
+  const d = el("details", "vms");
+  if (openVMs.has(c.name)) d.open = true;
+  d.addEventListener("toggle", () => { d.open ? openVMs.add(c.name) : openVMs.delete(c.name); });
+  d.append(el("summary", null, `Show VMs (${c.vms_running}/${c.vms_total} running)`));
+  const box = el("div", "vmlist");
+  const run = c.vms.filter(v => v.running), off = c.vms.filter(v => !v.running);
+  const group = (title, list, cls) => {
+    box.append(el("h4", null, `${title} (${list.length})`));
+    const ul = el("ul", "plain " + cls);
+    if (!list.length) ul.append(el("li", "muted", "none"));
+    for (const v of list) {
+      const li = el("li", null, v.name);
+      if (v.kind === "ct") li.append(el("span", "kind", "container"));
+      if (!v.running && v.state && v.state !== "stopped") li.append(el("span", "kind", v.state));
+      ul.append(li);
+    }
+    box.append(ul);
+  };
+  group("Running", run, "on"); group("Not running", off, "off");
+  d.append(box);
+  return d;
+}
+
 function card(c) {
   const offline = (c.nodes||[]).filter(n => !n.online);
-  const cls = !c.reachable ? "down" : offline.length ? "degraded" : "";
+  const cls = !c.reachable ? "down" : (offline.length || c.drives_unhealthy) ? "degraded" : "";
   const d = el("div", "card " + cls);
   const t = el("div", "row"); t.append(el("span","title",c.name), el("span","badge",c.type==="proxmox"?"Proxmox":"Scale"));
   d.append(t);
@@ -54,24 +118,63 @@ function card(c) {
     if (c.drives_unhealthy) rows.push(["Drives unhealthy", String(c.drives_unhealthy)]);
     if (c.updates_pending != null) rows.push(["Updates pending", String(c.updates_pending)]);
     for (const [k,v] of rows) { const r = el("div","row"); r.append(el("span","muted",k), el("span",null,v)); d.append(r); }
+    const vd = vmDetails(c); if (vd) d.append(vd);
   }
   d.append(el("div","muted","Checked " + ago(c.checked_at)));
   const a = el("div","actions");
   const open = el("a","btn","Open"); open.href = c.link; open.target = "_blank"; open.rel = "noopener";
-  const emb = el("button",null,"Embed"); emb.onclick = () => { $("#ftitle").textContent = c.name; $("#fi").src = c.link; $("#fnew").href = c.link; $("#frame").classList.add("on"); };
+  const emb = el("button",null,"Embed"); emb.type = "button";
+  emb.onclick = () => { $("#ftitle").textContent = c.name; $("#fi").src = c.link; $("#fnew").href = c.link; $("#frame").classList.add("on"); };
   a.append(open, emb); d.append(a);
   return d;
+}
+
+function renderProblems(cl) {
+  const items = [];
+  for (const c of cl) {
+    if (!c.reachable) items.push(`${c.name}: unreachable (${c.error})`);
+    else {
+      for (const n of c.nodes.filter(n => !n.online)) items.push(`${c.name}: node ${n.name} is offline`);
+      if (c.drives_unhealthy) items.push(`${c.name}: ${c.drives_unhealthy} drive(s) reported unhealthy`);
+    }
+  }
+  const box = $("#problems");
+  box.replaceChildren();
+  box.className = "problems" + (items.length ? "" : " none");
+  if (!items.length) { box.append(document.createTextNode("No active problems.")); return 0; }
+  box.append(el("h2", null, `Active problems (${items.length})`));
+  const ul = el("ul", "plain"); for (const t of items) ul.append(el("li", null, t)); box.append(ul);
+  return items.length;
+}
+
+function renderEvents() {
+  const visible = lastEvents.filter(e => e.ts > clearedBefore);
+  const hidden = lastEvents.length - visible.length;
+  const list = showCleared ? lastEvents : visible;
+  const ul = $("#events"); ul.replaceChildren();
+  if (!list.length) ul.append(el("li", "muted", hidden ? "All events cleared." : "No events yet."));
+  for (const e of list) {
+    const cls = e.ts <= clearedBefore ? "ev cleared" : e.ts > newSince ? "ev new" : "ev old";
+    ul.append(el("li", cls, `${new Date(e.ts*1000).toLocaleString()} — ${e.kind.toUpperCase()}: ${e.message}`));
+  }
+  const sc = $("#showcleared");
+  sc.hidden = hidden === 0;
+  sc.textContent = showCleared ? "Hide cleared" : `Show cleared (${hidden})`;
+  $("#clear").disabled = visible.length === 0;
+  $("#evmeta").textContent = visible.some(e => e.ts > newSince) ? "bold = new since your last visit" : "";
 }
 
 async function refresh() {
   try {
     const [cl, ev] = await Promise.all([fetch("/api/clusters").then(r=>r.json()), fetch("/api/events").then(r=>r.json())]);
-    const grid = $("#grid"); grid.replaceChildren(...cl.map(card));
-    const down = cl.filter(c => !c.reachable || c.nodes.some(n => !n.online)).length;
-    $("#summary").textContent = `${cl.length} clusters · ${down ? down + " need attention" : "all healthy"}`;
-    $("#events").replaceChildren(...ev.map(e => el("li", null, `${new Date(e.ts*1000).toLocaleString()} — ${e.kind.toUpperCase()}: ${e.message}`)));
+    $("#grid").replaceChildren(...cl.map(card));
+    const n = renderProblems(cl);
+    $("#summary").textContent = `${cl.length} clusters · ${n ? n + " active problem" + (n > 1 ? "s" : "") : "all healthy"}`;
+    lastEvents = ev; renderEvents();
   } catch (e) { $("#summary").textContent = "Dashboard API unreachable"; }
 }
+$("#clear").onclick = () => { clearedBefore = Date.now() / 1000; store.set("clearedBefore", clearedBefore); renderEvents(); };
+$("#showcleared").onclick = () => { showCleared = !showCleared; renderEvents(); };
 $("#close").onclick = () => { $("#frame").classList.remove("on"); $("#fi").src = "about:blank"; };
 refresh(); setInterval(refresh, 15000);
 </script>
