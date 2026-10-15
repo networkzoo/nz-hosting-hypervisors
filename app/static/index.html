@@ -29,6 +29,11 @@
   .problems { border:1px solid var(--bad); border-radius:8px; padding:10px 12px; background:var(--card); }
   .problems.none { border-color:var(--line); color:var(--muted); }
   .problems li::before { content:"●"; color:var(--bad); margin-right:6px; }
+  .problems li.warn::before { color:var(--warn); }
+  .problems.warnonly { border-color:var(--warn); }
+  .row .stale { color:var(--warn); font-weight:600; }
+  #toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; max-width:90vw; overflow-wrap:anywhere; }
+  #toast.on { opacity:.95; }
   .ev.new { color:var(--text); font-weight:600; } .ev.old { color:var(--muted); } .ev.cleared { opacity:.55; font-style:italic; }
   details.vms { margin:6px 0 0; } details.vms summary { cursor:pointer; color:var(--muted); font-size:13px; }
   .vmlist { max-height:220px; overflow:auto; margin-top:6px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
@@ -50,12 +55,25 @@
     <button id="showcleared" type="button" hidden></button></h2>
   <ul id="events" class="plain"></ul>
 </section>
+<div id="toast" role="status"></div>
 <div id="frame"><header><button id="close" type="button">← Back</button><b id="ftitle"></b><a class="btn" id="fnew" target="_blank" rel="noopener">Open in new tab</a>
 <span class="muted">Blank frame? The site blocks embedding — use the new tab.</span></header><iframe id="fi" title="Cluster console"></iframe></div>
 <script>
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const ago = ts => { if (!ts) return "never"; const s = Math.round(Date.now()/1000 - ts); return s < 90 ? s+"s ago" : s < 5400 ? Math.round(s/60)+"m ago" : Math.round(s/3600)+"h ago"; };
+
+const dayWord = ts => { const d = Math.floor((Date.now()/1000 - ts) / 86400); return d <= 0 ? "today" : d === 1 ? "1 day ago" : d + " days ago"; };
+let toastTimer;
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 2800); }
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  try {   // older/blocked clipboard API: fall back to a hidden textarea
+    const ta = el("textarea"); ta.value = text; ta.style.cssText = "position:fixed;opacity:0"; document.body.append(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); if (ok) return true;
+  } catch (e) {}
+  window.prompt("Copy this command:", text); return false;
+}
 
 // Per-person state lives in this browser only (localStorage). Every access is guarded: it can be blocked.
 const store = {
@@ -120,11 +138,25 @@ function card(c) {
       ["CPU", c.cpu_pct == null ? "–" : c.cpu_pct + "%"],
       ["Version", c.version || "–"],
     ];
+    if (c.updated_at) rows.push(["Last updated", dayWord(c.updated_at) + (c.stale ? " ⚠" : ""), c.stale]);
+    else if (c.tracking_since) rows.push(["Last updated", c.stale ? `no change in ${Math.floor(c.days_since_update)} days ⚠` : `unknown (watching since ${new Date(c.tracking_since*1000).toLocaleDateString()})`, c.stale]);
     if (c.drives_unhealthy) rows.push(["Drives unhealthy", String(c.drives_unhealthy)]);
     if (c.updates_pending != null) rows.push(["Updates pending", String(c.updates_pending)]);
-    for (const [k,v] of rows) { const r = el("div","row"); r.append(el("span","muted",k), el("span",null,v)); d.append(r); }
+    for (const [k,v,warn] of rows) { const r = el("div","row"); const val = el("span", warn ? "stale" : null, v); if (k === "Last updated" && c.last_change) val.title = c.last_change; r.append(el("span","muted",k), val); d.append(r); }
     const vd = vmDetails(c); if (vd) d.append(vd);
     if (c.type === "proxmox" && c.url) {
+      const sshNodes = c.nodes.filter(n => n.ip);
+      if (sshNodes.length) {
+        const sh = el("div", "actions");
+        sh.append(el("span", "muted", "SSH (copy):"));
+        for (const n of sshNodes) {
+          const cmd = `ssh ${c.ssh_user || "root"}@${n.ip}`;
+          const b = el("button", null, n.name); b.type = "button"; b.title = cmd;
+          b.onclick = async () => { const ok = await copyText(cmd); if (ok) toast(`Copied: ${cmd}`); };
+          sh.append(b);
+        }
+        d.append(sh);
+      }
       const u = el("div", "actions");
       u.append(el("span", "muted", "Updates:"));
       for (const n of c.nodes.filter(n => n.online)) {
@@ -146,20 +178,22 @@ function card(c) {
 }
 
 function renderProblems(cl) {
-  const items = [];
+  const items = [];   // {t: text, warn: true for "needs attention" rather than "broken"}
   for (const c of cl) {
-    if (!c.reachable) items.push(`${c.name}: unreachable (${c.error})`);
+    if (!c.reachable) items.push({t: `${c.name}: unreachable (${c.error})`});
     else {
-      for (const n of c.nodes.filter(n => !n.online)) items.push(`${c.name}: node ${n.name} is offline`);
-      if (c.drives_unhealthy) items.push(`${c.name}: ${c.drives_unhealthy} drive(s) reported unhealthy`);
+      for (const n of c.nodes.filter(n => !n.online)) items.push({t: `${c.name}: node ${n.name} is offline`});
+      if (c.drives_unhealthy) items.push({t: `${c.name}: ${c.drives_unhealthy} drive(s) reported unhealthy`});
+      if (c.stale) items.push({t: `${c.name}: no update detected in ${Math.floor(c.days_since_update)} days (limit ${c.stale_limit})`, warn: true});
     }
   }
   const box = $("#problems");
   box.replaceChildren();
-  box.className = "problems" + (items.length ? "" : " none");
+  const broken = items.some(i => !i.warn);
+  box.className = "problems" + (items.length ? (broken ? "" : " warnonly") : " none");
   if (!items.length) { box.append(document.createTextNode("No active problems.")); return 0; }
   box.append(el("h2", null, `Active problems (${items.length})`));
-  const ul = el("ul", "plain"); for (const t of items) ul.append(el("li", null, t)); box.append(ul);
+  const ul = el("ul", "plain"); for (const i of items) ul.append(el("li", i.warn ? "warn" : null, i.t)); box.append(ul);
   return items.length;
 }
 

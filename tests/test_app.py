@@ -22,6 +22,14 @@ def pve_handler(offline=False):
                 {"type": "qemu", "status": "running", "name": "api", "vmid": 102},
                 {"type": "qemu", "status": "stopped", "template": 1, "name": "tmpl", "vmid": 9000},
             ]})
+        if p.endswith("/cluster/status"):
+            return httpx.Response(200, json={"data": [
+                {"type": "cluster", "name": "dc"},
+                {"type": "node", "name": "a", "ip": "10.0.0.1", "online": 1},
+                {"type": "node", "name": "b", "ip": "10.0.0.2", "online": 0}]})
+        if p.endswith("/status") and "/nodes/" in p:
+            return httpx.Response(200, json={"data": {
+                "pveversion": "pve-manager/9.1.9/abcdef", "kversion": "Linux 6.14.11-5-pve #1 SMP PMX"}})
         if "/apt/update" in p:
             return httpx.Response(200, json={"data": [{"Package": "x"}] * 3})
         return httpx.Response(404)
@@ -41,6 +49,8 @@ async def test_proxmox_collect():
     assert [(v["name"], v["running"], v["kind"]) for v in r["vms"]] == [
         ("api", True, "vm"), ("web1", True, "vm"), ("Backup", False, "ct")]
     assert r["updates_pending"] == 3  # only the online node is queried
+    assert r["versions"] == {"a": {"pve": "9.1.9", "kernel": "6.14.11-5-pve"}}   # offline node skipped
+    assert [n.get("ip") for n in r["nodes"]] == ["10.0.0.1", "10.0.0.2"]
     assert [n.get("updates") for n in r["nodes"]] == [3, None]
     assert r["mem_pct"] == 25.0 and r["cpu_pct"] == 50.0
 

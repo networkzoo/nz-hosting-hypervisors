@@ -4,6 +4,8 @@ Result dict:
   reachable, error, version, nodes: [{name, online}], vms_running, vms_total,
   cpu_pct, mem_pct, updates_pending (None = unknown)
 """
+from urllib.parse import urlparse
+
 import httpx
 
 from .config import ClusterConfig
@@ -51,6 +53,32 @@ async def collect_proxmox(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
         for n in nodes:
             n.pop("updates", None)
 
+    # Node addresses (for the ssh buttons). A standalone host falls back to the address we poll.
+    try:
+        for e in await get("/cluster/status"):
+            if e.get("type") == "node" and e.get("ip"):
+                for n in nodes:
+                    if n["name"] == e.get("name"):
+                        n["ip"] = e["ip"]
+    except (httpx.HTTPError, KeyError, ValueError, TypeError):
+        pass
+    if len(nodes) == 1 and not nodes[0].get("ip"):
+        nodes[0]["ip"] = urlparse(c.url).hostname
+
+    # What each online node is running, so the dashboard can tell when a cluster was last updated.
+    versions = {}
+    try:
+        for n in nodes:
+            if n["online"]:
+                st = await get(f"/nodes/{n['name']}/status")
+                pve = str(st.get("pveversion", ""))
+                pve = pve.split("/")[1] if pve.count("/") >= 1 else pve
+                kv = str(st.get("kversion", "")).split()          # "Linux 6.14.11-5-pve #1 SMP ..."
+                kern = (st.get("current-kernel") or {}).get("release") or (kv[1] if len(kv) > 1 else "")
+                versions[n["name"]] = {"pve": pve or "?", "kernel": kern or "?"}
+    except (httpx.HTTPError, KeyError, ValueError, TypeError, IndexError):
+        versions = {}
+
     vms = _sort_vms([
         {"name": g.get("name") or f"{g['type']}/{g.get('vmid', '?')}",
          "running": g.get("status") == "running",
@@ -62,6 +90,7 @@ async def collect_proxmox(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
         "version": version,
         "nodes": nodes,
         "vms": vms,
+        "versions": versions,
         "vms_running": sum(1 for g in guests if g.get("status") == "running"),
         "vms_total": len(guests),
         "cpu_pct": _pct(sum(r.get("cpu", 0) * r.get("maxcpu", 0) for r in node_res),
@@ -110,6 +139,7 @@ async def collect_scale(c: ClusterConfig, client: httpx.AsyncClient) -> dict:
     drives = [d for n in nodes_raw for d in n.get("drives", [])]
     return {
         "version": cluster.get("icosVersion", ""),
+        "versions": {"cluster": {"version": cluster.get("icosVersion", "?")}},
         "nodes": nodes,
         "vms": vm_list,
         "vms_running": vms_running,

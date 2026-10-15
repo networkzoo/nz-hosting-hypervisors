@@ -49,3 +49,22 @@ It prompts for the secret (hidden), writes it to `.env`, appends a correctly ind
 `DashboardUpdates` role) so the dashboard can show per-node pending updates. That is more than read-only,
 so it is opt-in per cluster. Re-running it on an existing cluster adds the grant without touching the token.
 Revoke with `pveum acl delete /nodes --users monitor@pve --roles DashboardUpdates`.
+
+## Teams alerts
+1. In Teams, create the channel (e.g. "Fleet Alerts").
+2. In that channel: **... > Workflows > "Post to a channel when a webhook request is received"**, name it,
+   confirm the team/channel, and copy the **URL** it gives you. (Teams' older "Incoming Webhook" connector
+   is being retired; Workflows replaces it. Menu names shift between Teams versions.) Treat the URL as a
+   secret: anyone with it can post to the channel.
+3. On the dashboard VM: add `TEAMS_WEBHOOK=<url>` to `/opt/dashboard/.env` (edit with nano), and in
+   `config.yaml` under `alerts:` add `webhook_url_env: TEAMS_WEBHOOK` and `webhook_format: teams`.
+4. `docker compose up -d --force-recreate dashboard`, then test:
+   `docker compose exec dashboard python -m app.testalert`
+   A DOWN-style and an OK-style card should appear in the channel within a few seconds.
+If it fails, the command prints the error (a 4xx usually means a wrong or expired URL, or the Workflow is turned off).
+
+## Update tracking and the 30-day rule
+Proxmox clusters: the dashboard remembers each node's pve-manager and kernel version and notes when they
+change ("Last updated"). If none change for `alerts.stale_days` (30), it alerts in Teams and again every
+7 days until an update is seen. Scale shows the same row but never alerts. When tracking starts, the real date of the
+last update is unknown, so it shows "watching since <date>" and the 30 days count from then.

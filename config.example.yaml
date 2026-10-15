@@ -1,9 +1,17 @@
 poll_interval: 60          # seconds
 db_path: data/events.db
 
+# Dead-man's switch: pinged after every complete poll cycle (see deadman/README.md). Optional.
+# deadman_url_env: DEADMAN_URL
+
 alerts:
   fail_threshold: 2        # consecutive failed polls before alerting (avoids blips)
-  # webhook_url_env: ALERT_WEBHOOK   # Slack / Teams / Mattermost incoming webhook
+  stale_days: 30           # Proxmox only: alert if no update is seen for this many days (0 = off).
+                           # Reminds every 7 days while overdue. Override per cluster with stale_days: N.
+  # Teams: create a channel Workflow ("Post to a channel when a webhook request is received"),
+  # put its URL in .env as TEAMS_WEBHOOK, then:
+  # webhook_url_env: TEAMS_WEBHOOK
+  # webhook_format: teams            # "text" for Slack / Mattermost style webhooks
   smtp:
     host: smtp.example.com
     port: 587
@@ -23,6 +31,7 @@ clusters:
     token_secret_env: PVE1_TOKEN
     verify_tls: false
     link: https://pve1.example.com:8006   # or your SSO login URL
+    # ssh_user: root                      # used by the "SSH (copy)" buttons
 
   # Scale Computing HyperCore: use a read-only (non-admin) local or SSO-backed user.
   - name: Scale-Site1

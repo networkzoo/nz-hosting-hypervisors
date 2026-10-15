@@ -1,0 +1,20 @@
+# Self-hosted Healthchecks: the dashboard pings it; if the pings stop, it alerts you.
+# Run this on a DIFFERENT machine from the dashboard VM (and not on the same Proxmox host / NAS),
+# otherwise one failure takes out both the dashboard and its watchdog.
+services:
+  healthchecks:
+    image: healthchecks/healthchecks:latest     # consider pinning a specific version once it works
+    restart: unless-stopped
+    ports: ["8000:8000"]
+    env_file: .env
+    environment:
+      - DB=sqlite
+      - DB_NAME=/data/hc.sqlite
+      - REGISTRATION_OPEN=False                 # nobody else can create accounts
+      - DEBUG=False
+      - PORT=8000
+    volumes:
+      - hc_data:/data
+
+volumes:
+  hc_data:

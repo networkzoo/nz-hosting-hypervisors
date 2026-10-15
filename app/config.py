@@ -19,6 +19,8 @@ class ClusterConfig:
     # scale
     username: str = ""
     password: str = ""
+    ssh_user: str = "root"           # used for the "copy ssh command" buttons (Proxmox)
+    stale_days: int | None = None    # per-cluster override of alerts.stale_days (0 = off)
 
 
 @dataclass
@@ -39,6 +41,10 @@ class Config:
     db_path: str = "data/events.db"
     smtp: SmtpConfig = field(default_factory=SmtpConfig)
     webhook_url: str = ""
+    webhook_format: str = "text"     # "text" (Slack/Mattermost style) or "teams" (Workflows adaptive card)
+    stale_days: int = 30             # alert when a Proxmox cluster shows no update for this many days (0 = off)
+    stale_reminder_days: int = 7     # repeat the stale alert this often while it stays stale
+    deadman_url: str = ""            # pinged after every successful poll cycle
     clusters: list[ClusterConfig] = field(default_factory=list)
 
 
@@ -68,7 +74,13 @@ def load_config(path: str | Path) -> Config:
             to=list(s.get("to", []) or []),
         ),
         webhook_url=_secret(alerts, "webhook_url"),
+        webhook_format=str(alerts.get("webhook_format", "text")).lower(),
+        stale_days=int(alerts.get("stale_days", 30)),
+        stale_reminder_days=int(alerts.get("stale_reminder_days", 7)),
+        deadman_url=_secret(raw, "deadman_url"),
     )
+    if cfg.webhook_format not in ("text", "teams"):
+        raise ValueError("alerts.webhook_format must be 'text' or 'teams'")
     for c in raw.get("clusters", []) or []:
         if c["type"] not in ("proxmox", "scale"):
             raise ValueError(f"cluster {c.get('name')}: type must be proxmox or scale")
@@ -83,6 +95,8 @@ def load_config(path: str | Path) -> Config:
                 token_secret=_secret(c, "token_secret"),
                 username=c.get("username", ""),
                 password=_secret(c, "password"),
+                ssh_user=c.get("ssh_user", "root"),
+                stale_days=None if c.get("stale_days") is None else int(c["stale_days"]),
             )
         )
     return cfg
