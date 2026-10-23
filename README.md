@@ -13,6 +13,8 @@ docker compose up -d --build           # http://127.0.0.1:8080
 ```
 Or locally: `pip install -r requirements.txt && uvicorn app.main:app --port 8080`. Tests: `pytest`.
 
+**Adding or removing clusters:** see [docs/clusters.md](docs/clusters.md).
+
 ## Credentials (read-only everywhere)
 - **Proxmox**: API token with the `PVEAuditor` role. "Updates pending" additionally needs `Sys.Modify` on `/nodes`; without it that field shows as unknown.
 - **Scale HyperCore**: a read-only user, HTTP basic auth against `/rest/v1/`.
