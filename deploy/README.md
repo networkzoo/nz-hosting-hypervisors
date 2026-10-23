@@ -40,6 +40,8 @@ python3 deploy/cluster_config.py add scale   "CDAC"   https://10.4.33.10 --user 
 python3 deploy/cluster_config.py check      # validates config.yaml and that every secret is in .env
 python3 deploy/cluster_config.py list
 python3 deploy/cluster_config.py set-secret Aviary --apply   # replace a wrong/rotated secret
+python3 deploy/cluster_config.py rename OLD NEW --apply      # rename:  rename -- "--odd-name" NEW
+python3 deploy/cluster_config.py remove NAME --drop-secret --apply
 ```
 It prompts for the secret (hidden), writes it to `.env`, appends a correctly indented entry, keeps a
 `config.yaml.bak`, and with `--apply` recreates the dashboard container. Defaults: Proxmox token id

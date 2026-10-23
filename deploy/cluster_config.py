@@ -4,6 +4,8 @@
   python3 deploy/cluster_config.py check
   python3 deploy/cluster_config.py list
   python3 deploy/cluster_config.py set-secret Aviary [--apply]   # replace a wrong/rotated secret
+  python3 deploy/cluster_config.py rename OLD NEW [--apply]      # use `rename -- "--odd" NEW` if OLD starts with -
+  python3 deploy/cluster_config.py remove NAME [--drop-secret] [--apply]
   python3 deploy/cluster_config.py add proxmox Aviary https://172.16.124.30:8006 [--apply]
   python3 deploy/cluster_config.py add scale   CDAC   https://10.4.33.10 --user monitor [--apply]
 
@@ -122,6 +124,8 @@ def add(args):
     raw = open(CONFIG, encoding="utf-8").read()
     cfg = load_yaml(raw)
     names = [c.get("name") for c in (cfg.get("clusters") or [])]
+    if args.name.startswith("-"):
+        die("a cluster name can't start with '-' (it looks like an option)")
     if args.name in names:
         die(f"a cluster named {args.name!r} already exists")
     if not re.match(r"^https?://\S+$", args.url):
@@ -193,6 +197,96 @@ def add(args):
         print("Apply with:  docker compose up -d --force-recreate dashboard   (or re-run with --apply)")
 
 
+def _entry_span(lines, name):
+    """(start, end) line indexes of the list entry whose name is `name`, inside clusters:."""
+    try:
+        ci = next(i for i, l in enumerate(lines) if re.match(r"^clusters:\s*(#.*)?$", l))
+    except StopIteration:
+        die("no 'clusters:' section found")
+    start = dash = None
+    for i in range(ci + 1, len(lines)):
+        m = re.match(r"^(\s*)-\s+name:\s*(.*?)\s*(#.*)?$", lines[i])
+        if m:
+            val = m.group(2).strip().strip("\"'")
+            if start is not None:
+                return start, i
+            if val == name:
+                start, dash = i, len(m.group(1))
+        elif start is not None and lines[i].strip() and not lines[i].startswith("#"):
+            if len(lines[i]) - len(lines[i].lstrip()) <= dash:   # dedent: the list ended
+                return start, i
+    if start is None:
+        die(f"no cluster named {name!r}. Known: " + ", ".join(
+            str(c.get("name")) for c in load_yaml("\n".join(lines)).get("clusters") or []))
+    return start, len(lines)
+
+
+def _save_checked(lines, expect_names, label):
+    new_text = "\n".join(lines).rstrip("\n") + "\n"
+    parsed = load_yaml(new_text, "the new config")
+    got = [c.get("name") for c in parsed.get("clusters") or []]
+    if sorted(map(str, got)) != sorted(map(str, expect_names)):
+        die(f"internal check failed after {label}: expected {expect_names}, got {got}. Nothing was changed.")
+    shutil.copyfile(CONFIG, CONFIG + ".bak")
+    with open(CONFIG, "w", encoding="utf-8") as f:
+        f.write(new_text)
+    print(f"{label}. Backup: {CONFIG}.bak")
+
+
+def _apply(args):
+    if getattr(args, "apply", False):
+        print("Restarting dashboard...")
+        subprocess.run(["docker", "compose", "up", "-d", "--force-recreate", "dashboard"], cwd=ROOT, check=True)
+        print("Done. Give it a minute, then refresh the page.")
+    else:
+        print("Apply with:  docker compose up -d --force-recreate dashboard   (or re-run with --apply)")
+
+
+def remove(args):
+    raw = open(CONFIG, encoding="utf-8").read()
+    cfg = load_yaml(raw)
+    clusters = cfg.get("clusters") or []
+    target = [c for c in clusters if str(c.get("name")) == args.name]
+    if not target:
+        die(f"no cluster named {args.name!r}. Known: " + ", ".join(str(c.get("name")) for c in clusters))
+    lines = raw.splitlines()
+    a, b = _entry_span(lines, args.name)
+    del lines[a:b]
+    keep = [c.get("name") for c in clusters if str(c.get("name")) != args.name]
+    _save_checked(lines, keep, f"Removed {args.name!r}")
+    if args.drop_secret:
+        var = target[0].get("token_secret_env") or target[0].get("password_env")
+        used = {c.get("token_secret_env") or c.get("password_env") for c in clusters if c is not target[0]}
+        if var and var not in used and os.path.exists(ENVFILE):
+            kept = [l for l in open(ENVFILE, encoding="utf-8") if not re.match(rf"\s*{re.escape(var)}=", l)]
+            open(ENVFILE, "w", encoding="utf-8").writelines(kept)
+            os.chmod(ENVFILE, 0o600)
+            print(f"Removed {var} from .env")
+        elif var in used:
+            print(f"Kept {var} in .env: another cluster still uses it")
+    _apply(args)
+
+
+def rename(args):
+    if args.new.startswith("-"):
+        die("a cluster name can't start with '-'")
+    raw = open(CONFIG, encoding="utf-8").read()
+    cfg = load_yaml(raw)
+    names = [str(c.get("name")) for c in cfg.get("clusters") or []]
+    if args.old not in names:
+        die(f"no cluster named {args.old!r}. Known: " + ", ".join(names))
+    if args.new in names:
+        die(f"a cluster named {args.new!r} already exists (remove it first if it's a broken duplicate)")
+    lines = raw.splitlines()
+    a, _ = _entry_span(lines, args.old)
+    m = re.match(r"^(\s*-\s+name:\s*)", lines[a])
+    q = '"' + args.new.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    lines[a] = m.group(1) + q
+    _save_checked(lines, [args.new if n == args.old else n for n in names], f"Renamed {args.old!r} to {args.new!r}")
+    print("(The secret's variable name in .env is unchanged; that's fine, it's only a label.)")
+    _apply(args)
+
+
 def set_secret(args):
     cfg = load_yaml(open(CONFIG, encoding="utf-8").read())
     match = [c for c in (cfg.get("clusters") or []) if c.get("name") == args.name]
@@ -226,6 +320,13 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="validate config.yaml and .env")
     sub.add_parser("list", help="list configured clusters")
+    rm = sub.add_parser("remove", help="remove a cluster")
+    rm.add_argument("name")
+    rm.add_argument("--drop-secret", action="store_true", help="also delete its secret from .env (if unused elsewhere)")
+    rm.add_argument("--apply", action="store_true")
+    rn = sub.add_parser("rename", help="rename a cluster")
+    rn.add_argument("old"); rn.add_argument("new")
+    rn.add_argument("--apply", action="store_true")
     ss = sub.add_parser("set-secret", help="replace the stored secret for an existing cluster")
     ss.add_argument("name")
     ss.add_argument("--apply", action="store_true", help="recreate the dashboard container afterwards")
@@ -245,6 +346,10 @@ def main():
         check()
     elif args.cmd == "set-secret":
         set_secret(args)
+    elif args.cmd == "remove":
+        remove(args)
+    elif args.cmd == "rename":
+        rename(args)
     else:
         add(args)
 

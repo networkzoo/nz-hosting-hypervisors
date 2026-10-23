@@ -26,6 +26,7 @@ for a in "$@"; do
     --rotate) ROTATE=1 ;;
     --with-updates) WITH_UPDATES=1 ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -*) echo "ERROR: unknown option '$a' (this copy of the script may be out of date - fetch the latest)" >&2; exit 2 ;;
     *) NAME=$a ;;
   esac
 done
