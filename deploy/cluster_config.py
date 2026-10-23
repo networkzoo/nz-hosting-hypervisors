@@ -3,6 +3,7 @@
 
   python3 deploy/cluster_config.py check
   python3 deploy/cluster_config.py list
+  python3 deploy/cluster_config.py set-secret Aviary [--apply]   # replace a wrong/rotated secret
   python3 deploy/cluster_config.py add proxmox Aviary https://172.16.124.30:8006 [--apply]
   python3 deploy/cluster_config.py add scale   CDAC   https://10.4.33.10 --user monitor [--apply]
 
@@ -174,6 +175,7 @@ def add(args):
     secret = os.environ.get("CLUSTER_SECRET")
     if secret is None:
         secret = getpass.getpass(prompt + " (Enter to skip): ")
+    secret = secret.strip()     # a pasted secret often carries a trailing space/newline
     shutil.copyfile(CONFIG, CONFIG + ".bak")
     with open(CONFIG, "w", encoding="utf-8") as f:
         f.write(new_text)
@@ -191,11 +193,42 @@ def add(args):
         print("Apply with:  docker compose up -d --force-recreate dashboard   (or re-run with --apply)")
 
 
+def set_secret(args):
+    cfg = load_yaml(open(CONFIG, encoding="utf-8").read())
+    match = [c for c in (cfg.get("clusters") or []) if c.get("name") == args.name]
+    if not match:
+        die(f"no cluster named {args.name!r}. Known: " + ", ".join(str(c.get("name")) for c in cfg.get("clusters") or []))
+    c = match[0]
+    envvar = c.get("token_secret_env") if c.get("type") == "proxmox" else c.get("password_env")
+    if not envvar:
+        die(f"{args.name!r} has no secret variable set in config.yaml (token_secret_env / password_env)")
+    what = "API token secret" if c.get("type") == "proxmox" else "password"
+    secret = os.environ.get("CLUSTER_SECRET")
+    if secret is None:
+        secret = getpass.getpass(f"New {what} for {args.name} (stored in .env as {envvar}): ")
+    secret = secret.strip()
+    if not secret:
+        die("empty secret; nothing changed")
+    write_env_var(envvar, secret)
+    print(f"Updated {envvar} in .env ({len(secret)} characters).")
+    if c.get("type") == "proxmox":
+        print(f"The token id in config.yaml is {c.get('token_id')!r} - it must match the token the secret belongs to.")
+    if args.apply:
+        print("Restarting dashboard...")
+        subprocess.run(["docker", "compose", "up", "-d", "--force-recreate", "dashboard"], cwd=ROOT, check=True)
+        print("Done. Give it a minute, then refresh the page.")
+    else:
+        print("Apply with:  docker compose up -d --force-recreate dashboard   (or re-run with --apply)")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="validate config.yaml and .env")
     sub.add_parser("list", help="list configured clusters")
+    ss = sub.add_parser("set-secret", help="replace the stored secret for an existing cluster")
+    ss.add_argument("name")
+    ss.add_argument("--apply", action="store_true", help="recreate the dashboard container afterwards")
     a = sub.add_parser("add", help="add a cluster")
     a.add_argument("type", choices=["proxmox", "scale"])
     a.add_argument("name")
@@ -210,6 +243,8 @@ def main():
         sys.exit(1 if check() else 0)
     elif args.cmd == "list":
         check()
+    elif args.cmd == "set-secret":
+        set_secret(args)
     else:
         add(args)
 
