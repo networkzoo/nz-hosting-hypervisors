@@ -339,7 +339,13 @@ def main():
     a.add_argument("--env", help="name of the .env variable for the secret (default derived from the name)")
     a.add_argument("--verify-tls", action="store_true", help="verify the HTTPS certificate (default: off)")
     a.add_argument("--apply", action="store_true", help="recreate the dashboard container afterwards")
-    args = p.parse_args()
+    # Flags written after a bare "--" would be read as names; move the known ones in front of it.
+    argv = sys.argv[1:]
+    if "--" in argv:
+        i = argv.index("--")
+        flags = [a for a in argv[i + 1:] if a in ("--apply", "--drop-secret", "--verify-tls")]
+        argv = argv[:i] + flags + ["--"] + [a for a in argv[i + 1:] if a not in flags]
+    args = p.parse_args(argv)
     if args.cmd == "check":
         sys.exit(1 if check() else 0)
     elif args.cmd == "list":
