@@ -11,9 +11,15 @@ cd /opt/dashboard && git pull        # do this first so you have the latest scri
 
 **1. On the cluster (one node only, as root):** create the read-only login and get a token.
 
-From your laptop (Command Prompt), nothing is saved on the node:
+From your laptop, in **Command Prompt (cmd)**, nothing is saved on the node:
 ```
 type C:\dev\hypervisor-web\deploy\pve-create-monitor.sh | ssh root@<node-address> "bash -s -- 'Cluster Name' --with-updates"
+```
+**In PowerShell** that pipe fails ("Cannot run a document in the middle of a pipeline"). Use these three lines instead:
+```
+scp C:\dev\hypervisor-web\deploy\pve-create-monitor.sh root@<node-address>:/root/
+ssh root@<node-address> "bash /root/pve-create-monitor.sh 'Cluster Name' --with-updates"
+ssh root@<node-address> "rm /root/pve-create-monitor.sh"
 ```
 Or paste the script onto the node and run `./pve-create-monitor.sh "Cluster Name" --with-updates`.
 
