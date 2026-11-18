@@ -173,3 +173,11 @@ def test_config_new_options(tmp_path):
     assert (c.clusters[0].ssh_user, c.clusters[0].stale_days) == ("ops", 0)
     f.write_text("alerts: {webhook_format: slackish}\n")
     with pytest.raises(ValueError): load_config(f)
+
+
+def test_recipients_accept_string_list_and_commas(tmp_path):
+    f = tmp_path / "c.yaml"
+    for to, want in [("a@b.c", ["a@b.c"]), ("a@b.c, d@e.f;g@h.i", ["a@b.c", "d@e.f", "g@h.i"]),
+                     (["a@b.c", " d@e.f "], ["a@b.c", "d@e.f"]), (None, [])]:
+        f.write_text("alerts:\n  smtp: {host: h, to: %s}\n" % (repr(to) if to is not None else "~"))
+        assert load_config(f).smtp.to == want

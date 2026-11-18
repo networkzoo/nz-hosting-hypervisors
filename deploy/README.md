@@ -40,6 +40,7 @@ python3 deploy/cluster_config.py add scale   "CDAC"   https://10.4.33.10 --user 
 python3 deploy/cluster_config.py check      # validates config.yaml and that every secret is in .env
 python3 deploy/cluster_config.py list
 python3 deploy/cluster_config.py set-secret Aviary --apply   # replace a wrong/rotated secret
+python3 deploy/cluster_config.py set-env SMTP_PASSWORD --apply   # store ANY secret in .env (hidden prompt)
 python3 deploy/cluster_config.py rename OLD NEW --apply      # rename:  rename -- "--odd-name" NEW
 python3 deploy/cluster_config.py remove NAME --drop-secret --apply
 ```
@@ -71,3 +72,13 @@ Proxmox clusters: the dashboard remembers each node's pve-manager and kernel ver
 change ("Last updated"). If none change for `alerts.stale_days` (30), it alerts in Teams and again every
 7 days until an update is seen. Scale shows the same row but never alerts. When tracking starts, the real date of the
 last update is unknown, so it shows "watching since <date>" and the 30 days count from then.
+
+## Putting alert secrets in place (SMTP password, Teams URL)
+Config files hold only the **name** of a secret; the value lives in `.env`. Example for email + Teams:
+```
+python3 deploy/cluster_config.py set-env SMTP_PASSWORD      # hidden prompt
+python3 deploy/cluster_config.py set-env TEAMS_WEBHOOK      # paste the Workflow URL
+```
+and in `config.yaml`: `password_env: SMTP_PASSWORD`, `webhook_url_env: TEAMS_WEBHOOK`, `webhook_format: teams`,
+`to: you@example.com` (one address, or several separated by commas). `python3 deploy/cluster_config.py check`
+flags a real password typed into a `*_env` line. Then `docker compose exec dashboard python -m app.testalert`.

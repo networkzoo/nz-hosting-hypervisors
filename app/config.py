@@ -56,6 +56,14 @@ def _secret(d: dict, key: str) -> str:
     return d.get(key, "") or ""
 
 
+def _recipients(value) -> list[str]:
+    """`to:` may be a list, or one string holding one or more addresses separated by commas/semicolons."""
+    if not value:
+        return []
+    items = value if isinstance(value, (list, tuple)) else str(value).replace(";", ",").split(",")
+    return [str(i).strip() for i in items if str(i).strip()]
+
+
 def load_config(path: str | Path) -> Config:
     raw = yaml.safe_load(Path(path).read_text()) or {}
     alerts = raw.get("alerts", {}) or {}
@@ -71,7 +79,7 @@ def load_config(path: str | Path) -> Config:
             password=_secret(s, "password"),
             starttls=bool(s.get("starttls", True)),
             sender=s.get("from", ""),
-            to=list(s.get("to", []) or []),
+            to=_recipients(s.get("to")),
         ),
         webhook_url=_secret(alerts, "webhook_url"),
         webhook_format=str(alerts.get("webhook_format", "text")).lower(),

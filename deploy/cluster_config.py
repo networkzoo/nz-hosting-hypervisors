@@ -4,6 +4,7 @@
   python3 deploy/cluster_config.py check
   python3 deploy/cluster_config.py list
   python3 deploy/cluster_config.py set-secret Aviary [--apply]   # replace a wrong/rotated secret
+  python3 deploy/cluster_config.py set-env SMTP_PASSWORD [--apply]   # store any secret in .env (hidden prompt)
   python3 deploy/cluster_config.py rename OLD NEW [--apply]      # use `rename -- "--odd" NEW` if OLD starts with -
   python3 deploy/cluster_config.py remove NAME [--drop-secret] [--apply]
   python3 deploy/cluster_config.py add proxmox Aviary https://172.16.124.30:8006 [--apply]
@@ -80,6 +81,39 @@ def write_env_var(var, secret):
     os.chmod(ENVFILE, 0o600)  # holds secrets: owner-only
 
 
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+
+
+def check_alerts(cfg, env, quiet):
+    """Catch the common mistakes in the alert/dead-man settings without ever printing a secret."""
+    bad = 0
+    a = cfg.get("alerts") or {}
+    smtp = a.get("smtp") or {}
+    refs = [("alerts.webhook_url_env", a.get("webhook_url_env")),
+            ("alerts.smtp.password_env", smtp.get("password_env") if smtp.get("host") else None),
+            ("deadman_url_env", cfg.get("deadman_url_env"))]
+    for label, ref in refs:
+        if not ref:
+            continue
+        if not ENV_NAME.match(str(ref)):
+            print(f"  [BAD] {label}: must be the NAME of a variable in .env (like SMTP_PASSWORD), not the secret itself."
+                  " Put the secret in .env (python3 deploy/cluster_config.py set-env NAME) and write its name here."
+                  " If that was a real password, change it - it is now in config.yaml.")
+            bad += 1
+        elif not env.get(ref):
+            print(f"  [BAD] {label}: {ref} is not set in .env")
+            bad += 1
+        elif not quiet:
+            print(f"  [OK ] {label}: {ref} is set")
+    if smtp.get("host") and not smtp.get("to"):
+        print("  [BAD] alerts.smtp.to: no recipient address")
+        bad += 1
+    if (a.get("webhook_url_env") and str(a.get("webhook_format", "text")).lower() not in ("text", "teams")):
+        print("  [BAD] alerts.webhook_format must be 'text' or 'teams'")
+        bad += 1
+    return bad
+
+
 def check(quiet=False):
     if not os.path.exists(CONFIG):
         die(f"{CONFIG} not found")
@@ -113,8 +147,9 @@ def check(quiet=False):
             print(f"  [{status}] {name:<20} {c.get('type', '?'):<8} {c.get('url', '')}"
                   + (f"   <- {'; '.join(errs)}" if errs else ""))
         problems += bool(errs)
+    problems += check_alerts(cfg, env, quiet)
     if not quiet:
-        print(f"{len(clusters)} cluster(s), {problems} with problems")
+        print(f"{len(clusters)} cluster(s), {problems} problem(s) found")
     return problems
 
 
@@ -287,6 +322,20 @@ def rename(args):
     _apply(args)
 
 
+def set_env(args):
+    if not ENV_NAME.match(args.name):
+        die("name must look like a variable name, e.g. SMTP_PASSWORD or TEAMS_WEBHOOK")
+    value = os.environ.get("ENV_VALUE")
+    if value is None:
+        value = getpass.getpass(f"Value for {args.name} (hidden): ")
+    value = value.strip()
+    if not value:
+        die("empty value; nothing changed")
+    write_env_var(args.name, value)
+    print(f"Saved {args.name} in .env ({len(value)} characters).")
+    _apply(args)
+
+
 def set_secret(args):
     cfg = load_yaml(open(CONFIG, encoding="utf-8").read())
     match = [c for c in (cfg.get("clusters") or []) if c.get("name") == args.name]
@@ -320,6 +369,9 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check", help="validate config.yaml and .env")
     sub.add_parser("list", help="list configured clusters")
+    se = sub.add_parser("set-env", help="store any secret in .env (SMTP_PASSWORD, TEAMS_WEBHOOK, DEADMAN_URL ...)")
+    se.add_argument("name")
+    se.add_argument("--apply", action="store_true")
     rm = sub.add_parser("remove", help="remove a cluster")
     rm.add_argument("name")
     rm.add_argument("--drop-secret", action="store_true", help="also delete its secret from .env (if unused elsewhere)")
@@ -352,6 +404,8 @@ def main():
         check()
     elif args.cmd == "set-secret":
         set_secret(args)
+    elif args.cmd == "set-env":
+        set_env(args)
     elif args.cmd == "remove":
         remove(args)
     elif args.cmd == "rename":
