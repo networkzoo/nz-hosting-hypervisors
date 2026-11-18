@@ -40,7 +40,7 @@ $ErrorActionPreference = 'Stop'
 # Url/Branch = used only when it has to be cloned (leave Url empty to skip cloning)
 $Repos = @(
     @{ Name = 'doc-manager';            Legacy = 'doc-manager';                  Url = 'https://github.com/networkzoo/doc-manager.git';             Branch = 'main' },
-    @{ Name = 'hypervisor-web';          Legacy = 'Scale and Prox hosted page';   Url = 'https://github.com/networkzoo/nz-hosting-hypervisors.git';  Branch = 'claude/optimistic-davinci-65lq7d' },
+    @{ Name = 'hypervisor-web';          Legacy = 'Scale and Prox hosted page';   Url = 'https://github.com/networkzoo/nz-hosting-hypervisors.git';  Branch = 'main' },
     @{ Name = 'tools';                  Legacy = 'Tools (tools.networkzoo.ca)';  Url = 'https://github.com/networkzoo/networkzoo-tools.git';       Branch = 'master' }
 )
 
