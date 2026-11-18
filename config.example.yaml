@@ -6,6 +6,8 @@ db_path: data/events.db
 
 alerts:
   fail_threshold: 2        # consecutive failed polls before alerting (avoids blips)
+  repeat_hours: 1          # re-alert this often while something stays down (0 = never repeat).
+                           # Silence a problem from the dashboard to stop its reminders.
   stale_days: 30           # Proxmox only: alert if no update is seen for this many days (0 = off).
                            # Reminds every 7 days while overdue. Override per cluster with stale_days: N.
   # Teams: create a channel Workflow ("Post to a channel when a webhook request is received"),

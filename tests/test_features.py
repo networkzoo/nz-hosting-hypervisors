@@ -199,3 +199,127 @@ def test_teams_mention_config_accepts_string_or_list(tmp_path):
     f = tmp_path / "c.yaml"
     f.write_text("alerts:\n  webhook_format: teams\n  teams_mention: a@b.c, d@e.f\n")
     assert load_config(f).teams_mention == ["a@b.c", "d@e.f"]
+
+
+# ---------- hourly reminders + silencing ----------
+HOUR = 3600
+
+
+def down(name="n1"):
+    return {"reachable": True, "nodes": [{"name": name, "online": False}]}
+
+
+def up(name="n1"):
+    return {"reachable": True, "nodes": [{"name": name, "online": True}]}
+
+
+def clock(monkeypatch, start=1_000_000.0):
+    t = [start]
+    monkeypatch.setattr(alerts_mod.time, "time", lambda: t[0])
+    return t
+
+
+def mk2(**cfg):
+    sent = []
+    async def notify(kind, cluster, msg): sent.append((kind, msg))
+    db = EventDB(":memory:")
+    return AlertEngine(Config(fail_threshold=1, **cfg), db, notify), sent, db
+
+
+async def test_down_repeats_hourly_with_how_long_and_recovers(monkeypatch):
+    t = clock(monkeypatch); eng, sent, db = mk2()
+    await eng.evaluate("c", down()); assert len(sent) == 1
+    t[0] += 30 * 60; await eng.evaluate("c", down()); assert len(sent) == 1           # not yet
+    t[0] += 31 * 60; await eng.evaluate("c", down())                                  # 61 min
+    assert len(sent) == 2 and "still down after 1h 1m" in sent[-1][1] and sent[-1][0] == "down"
+    t[0] += HOUR; await eng.evaluate("c", down()); assert len(sent) == 3 and "2h 1m" in sent[-1][1]
+    await eng.evaluate("c", up()); assert sent[-1][0] == "recovered"
+    assert [e["kind"] for e in db.recent()] == ["recovered", "down"]                    # reminders aren't history spam
+
+
+async def test_repeat_hours_zero_disables_reminders(monkeypatch):
+    t = clock(monkeypatch); eng, sent, _ = mk2(repeat_hours=0)
+    await eng.evaluate("c", down()); t[0] += 5 * HOUR; await eng.evaluate("c", down())
+    assert len(sent) == 1
+
+
+async def test_silencing_before_the_first_alert_then_it_fires_when_the_silence_ends(monkeypatch):
+    t = clock(monkeypatch); eng, sent, db = mk2()
+    db.silence("c|node|n1", t[0] + 2 * HOUR)
+    await eng.evaluate("c", down()); t[0] += HOUR; await eng.evaluate("c", down())
+    assert sent == []                                                                  # silent while silenced
+    t[0] += 2 * HOUR; await eng.evaluate("c", down())
+    assert [k for k, _ in sent] == ["down"]                                            # silence over, still down: alert
+
+
+async def test_silencing_an_active_alert_stops_reminders_until_it_expires(monkeypatch):
+    t = clock(monkeypatch); eng, sent, db = mk2()
+    await eng.evaluate("c", down()); assert len(sent) == 1
+    db.silence("c|node|n1", t[0] + 3 * HOUR)
+    t[0] += 2 * HOUR; await eng.evaluate("c", down()); assert len(sent) == 1           # reminder due but silenced
+    t[0] += 2 * HOUR; await eng.evaluate("c", down()); assert len(sent) == 2           # silence expired: reminder resumes
+
+
+async def test_silence_until_fixed_clears_on_recovery_and_recovery_still_reported(monkeypatch):
+    t = clock(monkeypatch); eng, sent, db = mk2()
+    await eng.evaluate("c", down())
+    db.silence("c|node|n1", None)                                                      # until it recovers
+    t[0] += 10 * HOUR; await eng.evaluate("c", down()); assert len(sent) == 1
+    await eng.evaluate("c", up())
+    assert sent[-1][0] == "recovered" and not db.is_silenced("c|node|n1")
+    t[0] += HOUR; await eng.evaluate("c", down())                                      # goes down again later: alerts again
+    assert len(sent) == 3
+
+
+async def test_no_recovery_message_for_something_that_never_alerted(monkeypatch):
+    clock(monkeypatch); eng, sent, db = mk2()
+    db.silence("c|node|n1", None)
+    await eng.evaluate("c", down()); await eng.evaluate("c", up())
+    assert sent == []
+
+
+def test_problems_list_for_the_page():
+    eng, _, _ = mk2()
+    p = eng.problems("c", {"reachable": True, "nodes": [{"name": "n1", "online": False}], "drives_unhealthy": 2,
+                           "stale": True, "days_since_update": 40, "stale_limit": 30})
+    assert [(x["key"], x["warn"]) for x in p] == [("c|node|n1", False), ("c|drives", False), ("c|stale", True)]
+    assert eng.problems("c", up()) == []
+    assert eng.problems("c", {"reachable": False, "error": "boom", "nodes": []})[0]["key"] == "c|cluster"
+
+
+def test_silence_store_expiry_and_forever():
+    db = EventDB(":memory:")
+    db.silence("a", 100.0, now=0); db.silence("b", None, now=0)
+    assert db.silences(now=50) == {"a": 100.0, "b": EventDB.FOREVER}
+    assert db.silences(now=101) == {"b": EventDB.FOREVER}                              # a expired and dropped
+    db.unsilence("b"); assert db.silences(now=101) == {}
+
+
+# ---------- silence API ----------
+def api_client(monkeypatch):
+    from fastapi.testclient import TestClient
+    main_mod.app.state.db = EventDB(":memory:")
+    main_mod.state.clear()
+    main_mod.state["c"] = {"name": "c", "problems": [{"key": "c|node|n1", "text": "c: node n1 is offline", "warn": False}]}
+    return TestClient(main_mod.app)
+
+
+def test_silence_api_requires_the_custom_header_and_validates(monkeypatch):
+    c = api_client(monkeypatch)
+    assert c.post("/api/silence", json={"key": "c|node|n1", "hours": 1}).status_code == 403     # no header (cross-site)
+    h = {"X-Requested-With": "dashboard"}
+    assert c.post("/api/silence", json={"key": "c|node|n1", "hours": 0}, headers=h).status_code == 400
+    assert c.post("/api/silence", json={"key": "c|node|n1", "hours": 99999}, headers=h).status_code == 400
+    assert c.post("/api/silence", json={"key": "", "hours": 1}, headers=h).status_code == 400
+
+
+def test_silence_api_roundtrip_shows_in_clusters(monkeypatch):
+    c = api_client(monkeypatch); h = {"X-Requested-With": "dashboard"}
+    assert c.get("/api/clusters").json()[0]["problems"][0]["silenced_until"] is None
+    r = c.post("/api/silence", json={"key": "c|node|n1", "hours": 4}, headers=h).json()
+    assert r["ok"] and 3.9 * HOUR < r["until"] - __import__("time").time() <= 4 * HOUR
+    assert c.get("/api/clusters").json()[0]["problems"][0]["silenced_until"] == r["until"]
+    c.post("/api/silence", json={"key": "c|node|n1"}, headers=h)                       # until fixed
+    assert c.get("/api/clusters").json()[0]["problems"][0]["silenced_until"] == EventDB.FOREVER
+    assert c.post("/api/unsilence", json={"key": "c|node|n1"}, headers=h).json()["ok"]
+    assert c.get("/api/clusters").json()[0]["problems"][0]["silenced_until"] is None

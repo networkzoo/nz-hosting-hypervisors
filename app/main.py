@@ -5,9 +5,10 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from .alerts import AlertEngine
 from .collectors import poll
@@ -47,6 +48,7 @@ async def poll_cycle(cfg, engine, db):
             # unreachable right now: keep showing the last known update info, but don't judge staleness
             for k in ("updated_at", "tracking_since", "last_change"):
                 r[k] = prev.get(k)
+        r["problems"] = engine.problems(c.name, r)
         state[c.name] = r
         await engine.evaluate(c.name, r)
 
@@ -74,9 +76,47 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Hypervisor Fleet Dashboard", lifespan=lifespan)
 
 
+def with_silences(c: dict, silenced: dict) -> dict:
+    out = dict(c)
+    out["problems"] = [dict(p, silenced_until=silenced.get(p["key"])) for p in c.get("problems", [])]
+    return out
+
+
 @app.get("/api/clusters")
 def clusters():
-    return sorted(state.values(), key=lambda c: c["name"])
+    silenced = app.state.db.silences(time.time())
+    return [with_silences(c, silenced) for c in sorted(state.values(), key=lambda c: c["name"])]
+
+
+class SilenceIn(BaseModel):
+    key: str
+    hours: float | None = None   # None = until the problem recovers
+
+
+def _require_xhr(x_requested_with: str | None):
+    # A custom header can't be sent by a cross-site form, so this blocks drive-by requests that
+    # would otherwise ride on the browser's saved login.
+    if x_requested_with != "dashboard":
+        raise HTTPException(403, "missing X-Requested-With: dashboard")
+
+
+@app.post("/api/silence")
+def silence(body: SilenceIn, x_requested_with: str | None = Header(None)):
+    _require_xhr(x_requested_with)
+    if not body.key or len(body.key) > 300:
+        raise HTTPException(400, "bad key")
+    if body.hours is not None and not (0 < body.hours <= 24 * 30):
+        raise HTTPException(400, "hours must be between 0 and 720")
+    until = None if body.hours is None else time.time() + body.hours * 3600
+    app.state.db.silence(body.key, until)
+    return {"ok": True, "until": until}
+
+
+@app.post("/api/unsilence")
+def unsilence(body: SilenceIn, x_requested_with: str | None = Header(None)):
+    _require_xhr(x_requested_with)
+    app.state.db.unsilence(body.key)
+    return {"ok": True}
 
 
 @app.get("/api/events")

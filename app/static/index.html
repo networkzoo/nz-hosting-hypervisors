@@ -28,9 +28,15 @@
   ul.plain { list-style:none; margin:0; padding:0; } li { margin:3px 0; font-size:13px; overflow-wrap:anywhere; }
   .problems { border:1px solid var(--bad); border-radius:8px; padding:10px 12px; background:var(--card); }
   .problems.none { border-color:var(--line); color:var(--muted); }
-  .problems li::before { content:"●"; color:var(--bad); margin-right:6px; }
+  .problems li::before { content:"●"; color:var(--bad); margin-right:2px; }
   .problems li.warn::before { color:var(--warn); }
   .problems.warnonly { border-color:var(--warn); }
+  .problems.allsilenced { border-color:var(--line); }
+  .problems li { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+  .problems li .txt { flex:1 1 220px; min-width:0; }
+  .problems li.silenced .txt { opacity:.6; }
+  .problems li.silenced::before { color:var(--muted); }
+  .problems select, .problems li button { font:inherit; font-size:12px; padding:2px 6px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); }
   .row .stale { color:var(--warn); font-weight:600; }
   #toast { position:fixed; left:50%; bottom:18px; transform:translateX(-50%); background:var(--text); color:var(--bg); padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; max-width:90vw; overflow-wrap:anywhere; }
   #toast.on { opacity:.95; }
@@ -177,24 +183,49 @@ function card(c) {
   return d;
 }
 
-function renderProblems(cl) {
-  const items = [];   // {t: text, warn: true for "needs attention" rather than "broken"}
-  for (const c of cl) {
-    if (!c.reachable) items.push({t: `${c.name}: unreachable (${c.error})`});
-    else {
-      for (const n of c.nodes.filter(n => !n.online)) items.push({t: `${c.name}: node ${n.name} is offline`});
-      if (c.drives_unhealthy) items.push({t: `${c.name}: ${c.drives_unhealthy} drive(s) reported unhealthy`});
-      if (c.stale) items.push({t: `${c.name}: no update detected in ${Math.floor(c.days_since_update)} days (limit ${c.stale_limit})`, warn: true});
-    }
+const FOREVER = 4102444800;   // server's "until it recovers" marker
+const SILENCE_CHOICES = [["1","1 hour"],["4","4 hours"],["24","24 hours"],["168","7 days"],["fixed","Until fixed"]];
+async function postJSON(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Requested-With": "dashboard"}, body: JSON.stringify(body)});
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function problemRow(p) {
+  const li = el("li", (p.warn ? "warn " : "") + (p.silenced_until ? "silenced" : ""));
+  li.append(el("span", "txt", p.text));
+  if (p.silenced_until) {
+    const until = p.silenced_until >= FOREVER ? "until it recovers" : "until " + new Date(p.silenced_until * 1000).toLocaleString();
+    li.append(el("span", "muted", "🔕 silenced " + until));
+    const b = el("button", null, "Unsilence"); b.type = "button";
+    b.onclick = async () => { try { await postJSON("/api/unsilence", {key: p.key}); await refresh(); } catch (e) { toast("Could not unsilence: " + e.message); } };
+    li.append(b);
+  } else {
+    const sel = el("select"); sel.title = "Stop notifications for this problem (it stays listed here)";
+    sel.append(new Option("Silence…", ""));
+    for (const [v, label] of SILENCE_CHOICES) sel.append(new Option(label, v));
+    sel.onchange = async () => {
+      if (!sel.value) return;
+      try { await postJSON("/api/silence", {key: p.key, hours: sel.value === "fixed" ? null : parseFloat(sel.value)}); await refresh(); }
+      catch (e) { toast("Could not silence: " + e.message); sel.value = ""; }
+    };
+    li.append(sel);
   }
+  return li;
+}
+
+function renderProblems(cl) {
+  const items = cl.flatMap(c => c.problems || []);
   const box = $("#problems");
   box.replaceChildren();
-  const broken = items.some(i => !i.warn);
-  box.className = "problems" + (items.length ? (broken ? "" : " warnonly") : " none");
-  if (!items.length) { box.append(document.createTextNode("No active problems.")); return 0; }
-  box.append(el("h2", null, `Active problems (${items.length})`));
-  const ul = el("ul", "plain"); for (const i of items) ul.append(el("li", i.warn ? "warn" : null, i.t)); box.append(ul);
-  return items.length;
+  const live = items.filter(i => !i.silenced_until);
+  const broken = live.some(i => !i.warn);
+  box.className = "problems" + (!items.length ? " none" : !live.length ? " allsilenced" : broken ? "" : " warnonly");
+  if (!items.length) { box.append(document.createTextNode("No active problems.")); return {total: 0, live: 0}; }
+  const quiet = items.length - live.length;
+  box.append(el("h2", null, `Active problems (${items.length})`, ), ...(quiet ? [el("div", "muted", `${quiet} silenced`)] : []));
+  const ul = el("ul", "plain"); for (const i of items) ul.append(problemRow(i)); box.append(ul);
+  return {total: items.length, live: live.length};
 }
 
 function renderEvents() {
@@ -218,8 +249,10 @@ async function refresh() {
   try {
     const [cl, ev] = await Promise.all([fetch("/api/clusters").then(r=>r.json()), fetch("/api/events").then(r=>r.json())]);
     $("#grid").replaceChildren(...cl.map(card));
-    const n = renderProblems(cl);
-    $("#summary").textContent = `${cl.length} clusters · ${n ? n + " active problem" + (n > 1 ? "s" : "") : "all healthy"}`;
+    // Don't redraw the problems list while someone is choosing from a Silence menu in it.
+    const busy = $("#problems").contains(document.activeElement) && document.activeElement.tagName === "SELECT";
+    const n = busy ? {total: document.querySelectorAll("#problems li").length, live: document.querySelectorAll("#problems li:not(.silenced)").length} : renderProblems(cl);
+    $("#summary").textContent = `${cl.length} clusters · ` + (n.total ? `${n.total} active problem${n.total > 1 ? "s" : ""}` + (n.live < n.total ? ` (${n.total - n.live} silenced)` : "") : "all healthy");
     lastEvents = ev; renderEvents();
   } catch (e) { $("#summary").textContent = "Dashboard API unreachable"; }
 }

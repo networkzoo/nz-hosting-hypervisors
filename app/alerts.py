@@ -1,6 +1,7 @@
-"""Edge-triggered alerting: notify when something goes down (after N consecutive failed polls)
-and again when it recovers. No repeat spam while it stays down. "Stale" (no update seen for N
-days) is the one exception: it repeats on a slow reminder cycle, since it's a nag, not an outage."""
+"""Alerting: notify when something goes down (after N consecutive failed polls), remind you every
+`repeat_hours` while it stays down (and every `stale_reminder_days` for overdue updates), and say
+when it recovers. Any single problem can be silenced from the dashboard (for a while, or until it
+recovers); silenced problems stay visible on the page but send nothing."""
 import asyncio
 import logging
 import smtplib
@@ -17,6 +18,17 @@ TITLES = {"down": "DOWN", "stale": "UPDATE OVERDUE", "recovered": "OK"}
 TEAMS_COLOUR = {"down": "Attention", "stale": "Warning", "recovered": "Good"}
 
 
+def fmt_duration(seconds: float) -> str:
+    m = int(seconds // 60)
+    if m < 60:
+        return f"{m}m"
+    h, m = divmod(m, 60)
+    if h < 24:
+        return f"{h}h {m}m" if m else f"{h}h"
+    d, h = divmod(h, 24)
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
 class AlertEngine:
     def __init__(self, cfg: Config, db, notify=None):
         self.cfg = cfg
@@ -25,9 +37,10 @@ class AlertEngine:
         self.fails: dict[str, int] = {}     # key -> consecutive failures
         self.alerted: set[str] = set()      # keys currently in alert state
         self.last_alert: dict[str, float] = {}
+        self.first_alert: dict[str, float] = {}
 
-    async def evaluate(self, cluster: str, result: dict):
-        # key -> (ok, kind when not ok, message when not ok, message on recovery)
+    def checks(self, cluster: str, result: dict) -> dict:
+        """key -> (ok, kind when not ok, message when not ok, message on recovery)."""
         keys = {f"{cluster}|cluster": (result["reachable"], "down",
                                        f"{cluster} is unreachable: {result.get('error', '')}", f"{cluster} is back")}
         if result["reachable"]:
@@ -44,27 +57,44 @@ class AlertEngine:
                                             f"{cluster}: no updates detected for {days} days "
                                             f"(limit {result.get('stale_limit')})",
                                             f"{cluster}: updates detected again")
+        return keys
+
+    def problems(self, cluster: str, result: dict) -> list[dict]:
+        """What's wrong right now, for the page: [{key, text, warn}]. warn = needs attention, not an outage."""
+        return [{"key": key, "text": down_msg, "warn": kind == "stale"}
+                for key, (ok, kind, down_msg, _) in self.checks(cluster, result).items() if not ok]
+
+    async def evaluate(self, cluster: str, result: dict):
         now = time.time()
-        for key, (ok, kind, down_msg, up_msg) in keys.items():
+        for key, (ok, kind, down_msg, up_msg) in self.checks(cluster, result).items():
             if ok:
                 self.fails[key] = 0
-                if key in self.alerted:
+                self.db.unsilence(key)               # recovered: a "silence until fixed" has done its job
+                if key in self.alerted:              # only say "recovered" if we ever said "down"
                     self.alerted.discard(key)
+                    self.first_alert.pop(key, None)
                     await self._emit("recovered", cluster, up_msg)
-            else:
-                self.fails[key] = self.fails.get(key, 0) + 1
-                if self.fails[key] >= self.cfg.fail_threshold and key not in self.alerted:
+                continue
+            self.fails[key] = self.fails.get(key, 0) + 1
+            silenced = self.db.is_silenced(key, now)
+            if key not in self.alerted:
+                if self.fails[key] >= self.cfg.fail_threshold and not silenced:
                     self.alerted.add(key)
-                    self.last_alert[key] = now
+                    self.first_alert[key] = self.last_alert[key] = now
                     await self._emit(kind, cluster, down_msg)
-                elif (kind == "stale" and key in self.alerted and self.cfg.stale_reminder_days > 0
-                      and now - self.last_alert.get(key, now) >= self.cfg.stale_reminder_days * 86400):
-                    self.last_alert[key] = now
-                    await self._emit(kind, cluster, down_msg + " (reminder)")
+                continue
+            interval = (self.cfg.stale_reminder_days * 86400 if kind == "stale"
+                        else self.cfg.repeat_hours * 3600)
+            if interval > 0 and not silenced and now - self.last_alert.get(key, now) >= interval:
+                self.last_alert[key] = now
+                note = " (reminder)" if kind == "stale" else \
+                    f" (reminder: still down after {fmt_duration(now - self.first_alert.get(key, now))})"
+                await self._emit(kind, cluster, down_msg + note, record=False)
 
-    async def _emit(self, kind: str, cluster: str, message: str):
+    async def _emit(self, kind: str, cluster: str, message: str, record: bool = True):
         log.warning("%s: %s", kind, message)
-        self.db.add_event(cluster, kind, message)
+        if record:   # reminders notify but don't pile up in the history list
+            self.db.add_event(cluster, kind, message)
         try:
             await self.notify(kind, cluster, message)
         except Exception:  # noqa: BLE001 - alert delivery must not kill the poller

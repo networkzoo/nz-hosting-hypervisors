@@ -45,6 +45,7 @@ class Config:
     teams_mention: list[str] = field(default_factory=list)  # Teams: @mention these accounts on DOWN/overdue alerts (push notification)
     stale_days: int = 30             # alert when a Proxmox cluster shows no update for this many days (0 = off)
     stale_reminder_days: int = 7     # repeat the stale alert this often while it stays stale
+    repeat_hours: float = 1.0        # re-alert this often while something stays down (0 = never repeat)
     deadman_url: str = ""            # pinged after every successful poll cycle
     clusters: list[ClusterConfig] = field(default_factory=list)
 
@@ -87,6 +88,7 @@ def load_config(path: str | Path) -> Config:
         teams_mention=_recipients(alerts.get("teams_mention")),
         stale_days=int(alerts.get("stale_days", 30)),
         stale_reminder_days=int(alerts.get("stale_reminder_days", 7)),
+        repeat_hours=float(alerts.get("repeat_hours", 1)),
         deadman_url=_secret(raw, "deadman_url"),
     )
     if cfg.webhook_format not in ("text", "teams"):
