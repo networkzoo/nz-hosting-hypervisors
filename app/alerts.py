@@ -74,17 +74,28 @@ class AlertEngine:
         title = f"[{TITLES.get(kind, kind.upper())}] {message}"
         if self.cfg.webhook_format == "teams":
             # Teams "Workflows" webhooks expect a message wrapping an Adaptive Card.
+            body = [
+                {"type": "TextBlock", "text": f"Fleet Dashboard - {TITLES.get(kind, kind.upper())}",
+                 "weight": "Bolder", "size": "Medium", "color": TEAMS_COLOUR.get(kind, "Default"), "wrap": True},
+                {"type": "TextBlock", "text": message, "wrap": True},
+            ]
+            card_extra = {}
+            if self.cfg.teams_mention and kind in ("down", "stale"):   # an @mention is what triggers a phone push
+                entities, tags = [], []
+                for who in self.cfg.teams_mention:
+                    name = who.split("@")[0].split(".")[0].capitalize() or who
+                    tags.append(f"<at>{name}</at>")
+                    entities.append({"type": "mention", "text": f"<at>{name}</at>",
+                                     "mentioned": {"id": who, "name": name}})
+                body.append({"type": "TextBlock", "text": " ".join(tags), "wrap": True})
+                card_extra = {"msteams": {"entities": entities}}
             return {"type": "message", "attachments": [{
                 "contentType": "application/vnd.microsoft.card.adaptive",
                 "contentUrl": None,
                 "content": {
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard", "version": "1.4",
-                    "body": [
-                        {"type": "TextBlock", "text": f"Fleet Dashboard - {TITLES.get(kind, kind.upper())}",
-                         "weight": "Bolder", "size": "Medium", "color": TEAMS_COLOUR.get(kind, "Default"), "wrap": True},
-                        {"type": "TextBlock", "text": message, "wrap": True},
-                    ],
+                    "body": body, **card_extra,
                 },
             }]}
         return {"text": title}   # Slack / Mattermost style

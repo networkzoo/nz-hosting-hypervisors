@@ -42,6 +42,7 @@ class Config:
     smtp: SmtpConfig = field(default_factory=SmtpConfig)
     webhook_url: str = ""
     webhook_format: str = "text"     # "text" (Slack/Mattermost style) or "teams" (Workflows adaptive card)
+    teams_mention: list[str] = field(default_factory=list)  # Teams: @mention these accounts on DOWN/overdue alerts (push notification)
     stale_days: int = 30             # alert when a Proxmox cluster shows no update for this many days (0 = off)
     stale_reminder_days: int = 7     # repeat the stale alert this often while it stays stale
     deadman_url: str = ""            # pinged after every successful poll cycle
@@ -83,6 +84,7 @@ def load_config(path: str | Path) -> Config:
         ),
         webhook_url=_secret(alerts, "webhook_url"),
         webhook_format=str(alerts.get("webhook_format", "text")).lower(),
+        teams_mention=_recipients(alerts.get("teams_mention")),
         stale_days=int(alerts.get("stale_days", 30)),
         stale_reminder_days=int(alerts.get("stale_reminder_days", 7)),
         deadman_url=_secret(raw, "deadman_url"),

@@ -181,3 +181,21 @@ def test_recipients_accept_string_list_and_commas(tmp_path):
                      (["a@b.c", " d@e.f "], ["a@b.c", "d@e.f"]), (None, [])]:
         f.write_text("alerts:\n  smtp: {host: h, to: %s}\n" % (repr(to) if to is not None else "~"))
         assert load_config(f).smtp.to == want
+
+
+def test_teams_mention_only_on_down_and_stale_and_only_when_configured():
+    eng, _ = mk(Config(webhook_format="teams", teams_mention=["gord.hynes@networkzoo.ca"]))
+    card = eng.webhook_payload("down", "x")["attachments"][0]["content"]
+    ent = card["msteams"]["entities"][0]
+    assert ent["type"] == "mention" and ent["mentioned"]["id"] == "gord.hynes@networkzoo.ca"
+    assert ent["text"] == "<at>Gord</at>" and any("<at>Gord</at>" in b["text"] for b in card["body"])
+    assert "msteams" in eng.webhook_payload("stale", "x")["attachments"][0]["content"]
+    assert "msteams" not in eng.webhook_payload("recovered", "x")["attachments"][0]["content"]
+    plain, _ = mk(Config(webhook_format="teams"))
+    assert "msteams" not in plain.webhook_payload("down", "x")["attachments"][0]["content"]
+
+
+def test_teams_mention_config_accepts_string_or_list(tmp_path):
+    f = tmp_path / "c.yaml"
+    f.write_text("alerts:\n  webhook_format: teams\n  teams_mention: a@b.c, d@e.f\n")
+    assert load_config(f).teams_mention == ["a@b.c", "d@e.f"]

@@ -82,3 +82,12 @@ python3 deploy/cluster_config.py set-env TEAMS_WEBHOOK      # paste the Workflow
 and in `config.yaml`: `password_env: SMTP_PASSWORD`, `webhook_url_env: TEAMS_WEBHOOK`, `webhook_format: teams`,
 `to: you@example.com` (one address, or several separated by commas). `python3 deploy/cluster_config.py check`
 flags a real password typed into a `*_env` line. Then `docker compose exec dashboard python -m app.testalert`.
+
+## Teams doesn't push-notify my phone
+Messages a workflow posts into a channel don't notify by default. Either (a) add `teams_mention: you@yourdomain.com`
+under `alerts:` in `config.yaml` (use your Teams sign-in address) so DOWN and overdue cards @mention you, or
+(b) in Teams set the channel's notifications to "All new posts", or (c) point the Workflow at a group chat.
+Test with the phone locked: `docker compose exec dashboard python -m app.testalert --delay 30`.
+Other test options: `--kind down|stale|both`. A real end-to-end test: add a throw-away cluster with a bad address
+(`cluster_config.py add proxmox "ZZ Test" https://127.0.0.1:1 --apply`, Enter at the secret prompt), wait ~2 minutes for
+the alert, then `cluster_config.py remove "ZZ Test" --apply`.

@@ -12,6 +12,7 @@ alerts:
   # put its URL in .env as TEAMS_WEBHOOK, then:
   # webhook_url_env: TEAMS_WEBHOOK
   # webhook_format: teams            # "text" for Slack / Mattermost style webhooks
+  # teams_mention: you@yourdomain.com   # @mention these accounts on DOWN/overdue alerts so Teams pushes to your phone
   smtp:
     host: smtp.example.com
     port: 587
